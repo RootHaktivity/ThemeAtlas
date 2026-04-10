@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Local env and logs
+.venv/
+venv/
+.env
+*.log
+
+# OS/editor
+.DS_Store
+.vscode/

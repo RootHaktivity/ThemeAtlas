@@ -1,0 +1,21 @@
+# Linux Theme Manager – Python dependencies
+#
+# Default Python dependency:
+PySide6>=6.6
+Pillow>=9.0
+#
+# The rest of the tool is built on the Python standard library
+# (argparse, tarfile, zipfile, subprocess, shutil, pathlib, logging).
+#
+# System-level tools used at runtime (must be present on the host):
+#   - gsettings       (theme switching – part of libglib2.0-bin / glib2)
+#   - gnome-extensions (GNOME extension management – gnome-shell package)
+#   - pkexec          (privilege escalation – polkit package)
+#   - apt / dpkg      (Debian/Ubuntu package installation)
+#   - flatpak         (optional – Flatpak integration)
+#
+# GUI frontend (theme_manager gui):
+#   - PySide6 (Qt for Python)
+#   - Pillow (generated preview rendering)
+#
+# Pillow is installed by default via package metadata.
