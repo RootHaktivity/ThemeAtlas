@@ -1,5 +1,8 @@
 import subprocess
+import tempfile
 import unittest
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 from theme_manager import extensions
@@ -39,6 +42,42 @@ class TestExtensionEnabledDetection(unittest.TestCase):
         with patch.object(extensions, "_gnome_extensions_cli", return_value="/usr/bin/gnome-extensions"):
             with patch.object(extensions, "_run_silent", side_effect=[list_output, info_output]):
                 self.assertTrue(extensions.is_extension_enabled(uuid))
+
+
+class TestExtensionCompatibility(unittest.TestCase):
+    def _write_metadata(self, root: Path, payload: dict) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "metadata.json").write_text(json.dumps(payload), encoding="utf-8")
+        return root
+
+    def test_compatible_when_current_shell_in_supported_versions(self):
+        with tempfile.TemporaryDirectory() as td:
+            ext_dir = self._write_metadata(
+                Path(td),
+                {
+                    "uuid": "quick-settings-tweaks@qwreey",
+                    "shell-version": ["46", "47"],
+                },
+            )
+            with patch.object(extensions, "get_current_gnome_shell_major", return_value="46"):
+                ok, reason = extensions.extension_is_compatible_with_shell(ext_dir)
+        self.assertTrue(ok)
+        self.assertEqual(reason, "")
+
+    def test_incompatible_when_current_shell_not_supported(self):
+        with tempfile.TemporaryDirectory() as td:
+            ext_dir = self._write_metadata(
+                Path(td),
+                {
+                    "uuid": "quick-settings-tweaks@qwreey",
+                    "shell-version": ["48", "49"],
+                },
+            )
+            with patch.object(extensions, "get_current_gnome_shell_major", return_value="46"):
+                ok, reason = extensions.extension_is_compatible_with_shell(ext_dir)
+        self.assertFalse(ok)
+        self.assertIn("supports GNOME Shell 48, 49", reason)
+        self.assertIn("current GNOME Shell is 46", reason)
 
 
 if __name__ == "__main__":

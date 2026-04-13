@@ -11,19 +11,55 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .extractor import extract_archive
+from .extractor import extract_archive, install_from_source_tree as _install_from_source_tree, preview_archive_install
 from .logger import get_logger
 
 log = get_logger(__name__)
 
 
-def install_from_archive(path: str, system_wide: bool = False) -> list[str]:
-    """
-    Extract a theme archive and place files in the appropriate directories.
+def install_from_archive(
+    path: str,
+    system_wide: bool = False,
+    *,
+    allow_install_scripts: bool = False,
+    sandbox_install_scripts: bool = True,
+    allow_source_build: bool = False,
+    progress_callback=None,
+) -> list[str]:
+    """Extract a theme archive and place files in target directories."""
+    return extract_archive(
+        path,
+        system_wide=system_wide,
+        allow_install_scripts=allow_install_scripts,
+        sandbox_install_scripts=sandbox_install_scripts,
+        allow_source_build=allow_source_build,
+        progress_callback=progress_callback,
+    )
 
-    Returns a list of installed theme names.
-    """
-    return extract_archive(path, system_wide=system_wide)
+
+def preview_archive_changes(path: str, system_wide: bool = False) -> dict[str, object]:
+    """Return a dry-run preview of filesystem paths that would be changed."""
+    return preview_archive_install(path, system_wide=system_wide)
+
+
+def install_from_source_tree(
+    path: str,
+    system_wide: bool = False,
+    *,
+    allow_install_scripts: bool = False,
+    sandbox_install_scripts: bool = True,
+    allow_source_build: bool = True,
+    progress_callback=None,
+) -> list[str]:
+    """Install themes from an already checked-out source directory."""
+    return _install_from_source_tree(
+        path,
+        system_wide=system_wide,
+        allow_install_scripts=allow_install_scripts,
+        sandbox_install_scripts=sandbox_install_scripts,
+        allow_source_build=allow_source_build,
+        progress_callback=progress_callback,
+    )
 
 
 def install_from_deb(path: str) -> bool:
@@ -147,6 +183,9 @@ def install_from_package(package_name: str, package_manager: str) -> bool:
     if not pkg:
         log.error("Package name cannot be empty.")
         return False
+    if pkg.startswith("-"):
+        log.error("Package name cannot start with '-' (unsafe option-like input): %s", pkg)
+        return False
 
     if pm == "apt":
         if not shutil.which("apt-get"):
@@ -155,7 +194,7 @@ def install_from_package(package_name: str, package_manager: str) -> bool:
         log.info("Installing apt package: %s", pkg)
         try:
             result = subprocess.run(
-                ["pkexec", "apt-get", "install", "-y", pkg],
+                ["pkexec", "apt-get", "install", "-y", "--", pkg],
                 timeout=300,
                 check=False,
             )
@@ -174,7 +213,7 @@ def install_from_package(package_name: str, package_manager: str) -> bool:
         log.info("Installing pacman package: %s", pkg)
         try:
             result = subprocess.run(
-                ["pkexec", "pacman", "-S", "--noconfirm", pkg],
+                ["pkexec", "pacman", "-S", "--noconfirm", "--", pkg],
                 timeout=300,
                 check=False,
             )

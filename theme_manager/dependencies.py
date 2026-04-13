@@ -29,6 +29,25 @@ def _as_root_command(cmd: list[str]) -> list[str] | None:
 
 
 def _run_install_steps(steps: list[list[str]]) -> bool:
+    if not steps:
+        return True
+
+    if os.getuid() == 0:
+        # Already root — run each step directly, no privilege escalation needed
+        for step in steps:
+            log.info("Running install step (root): %s", " ".join(step))
+            try:
+                result = subprocess.run(step, timeout=300, check=False)
+            except subprocess.TimeoutExpired:
+                log.error("Install step timed out: %s", " ".join(step))
+                return False
+            if result.returncode != 0:
+                log.error("Install step failed with exit code %d", result.returncode)
+                return False
+        return True
+
+    # Non-root: execute each step with privilege escalation using argv only.
+    # This avoids unsafe shell interpolation and option injection via bash -c.
     for step in steps:
         full = _as_root_command(step)
         if full is None:
@@ -37,11 +56,11 @@ def _run_install_steps(steps: list[list[str]]) -> bool:
             )
             return False
 
-        log.info("Running dependency install step: %s", " ".join(full))
+        log.info("Running install step: %s", " ".join(full))
         try:
             result = subprocess.run(full, timeout=300, check=False)
         except subprocess.TimeoutExpired:
-            log.error("Dependency install step timed out: %s", " ".join(full))
+            log.error("Install step timed out: %s", " ".join(full))
             return False
 
         if result.returncode != 0:

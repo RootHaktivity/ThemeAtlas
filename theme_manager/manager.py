@@ -2,8 +2,10 @@
 Theme inventory management: listing and removal.
 """
 
+import json
 import os
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .logger import get_logger
@@ -21,6 +23,116 @@ SYS_THEMES_DIR  = Path("/usr/share/themes")
 SYS_ICONS_DIR   = Path("/usr/share/icons")
 SYS_SHELL_THEMES_DIR = Path("/usr/share/themes")
 GTK4_CONFIG_DIR = Path.home() / ".config" / "gtk-4.0"
+
+# ── Installed-app manifest ─────────────────────────────────────────────────────
+_APPS_MANIFEST = Path.home() / ".local" / "share" / "themeatlas" / "installed_apps.json"
+
+
+def _load_manifest() -> list[dict]:
+    try:
+        return json.loads(_APPS_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _save_manifest(entries: list[dict]) -> None:
+    _APPS_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    _APPS_MANIFEST.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+
+
+def record_installed_app(
+    name: str,
+    *,
+    binaries: list[str] | None = None,
+    share_dirs: list[str] | None = None,
+    lib_dirs: list[str] | None = None,
+) -> None:
+    """Write an entry for a source-built app to the installed-apps manifest.
+
+    Parameters
+    ----------
+    name:       Display name of the app (e.g. "Gradience").
+    binaries:   Absolute paths of installed executables.
+    share_dirs: Absolute paths of installed share/ subdirs.
+    lib_dirs:   Absolute paths of installed lib/ subtrees.
+    """
+    entries = _load_manifest()
+    # Remove any existing entry with the same name so reinstalls are clean.
+    entries = [e for e in entries if e.get("name", "").lower() != name.lower()]
+    entries.append({
+        "name": name,
+        "installed_at": datetime.now(timezone.utc).isoformat(),
+        "binaries": binaries or [],
+        "share_dirs": share_dirs or [],
+        "lib_dirs": lib_dirs or [],
+    })
+    _save_manifest(entries)
+    log.info("Recorded installed app: %s", name)
+
+
+def list_installed_apps() -> list[dict]:
+    """Return all entries from the installed-apps manifest.
+
+    Each entry is a dict with keys: name, installed_at, binaries, share_dirs, lib_dirs.
+    Non-existent entries are pruned from the manifest automatically.
+    """
+    entries = _load_manifest()
+    valid = []
+    for entry in entries:
+        # Keep entry if at least one tracked file or directory still exists.
+        paths = entry.get("binaries", []) + entry.get("share_dirs", []) + entry.get("lib_dirs", [])
+        if any(Path(p).exists() for p in paths):
+            valid.append(entry)
+    if len(valid) != len(entries):
+        _save_manifest(valid)
+    return valid
+
+
+def uninstall_app(name: str) -> tuple[bool, str]:
+    """Remove all files recorded for a source-built app and drop its manifest entry.
+
+    Returns (success, message).
+    """
+    entries = _load_manifest()
+    target = next((e for e in entries if e.get("name", "").lower() == name.lower()), None)
+    if target is None:
+        return False, f"No installed-app record found for '{name}'"
+
+    errors: list[str] = []
+
+    for path_str in target.get("binaries", []):
+        p = Path(path_str)
+        try:
+            if p.is_file():
+                p.unlink()
+                log.info("Removed binary: %s", p)
+        except OSError as exc:
+            errors.append(str(exc))
+
+    for path_str in target.get("share_dirs", []):
+        p = Path(path_str)
+        try:
+            if p.is_dir():
+                shutil.rmtree(p)
+                log.info("Removed share dir: %s", p)
+        except OSError as exc:
+            errors.append(str(exc))
+
+    for path_str in target.get("lib_dirs", []):
+        p = Path(path_str)
+        try:
+            if p.is_dir():
+                shutil.rmtree(p)
+                log.info("Removed lib dir: %s", p)
+        except OSError as exc:
+            errors.append(str(exc))
+
+    entries = [e for e in entries if e.get("name", "").lower() != name.lower()]
+    _save_manifest(entries)
+
+    if errors:
+        return False, f"Partially removed '{name}'; errors: {'; '.join(errors)}"
+    return True, f"Uninstalled '{name}' successfully"
 
 
 def _ls(path: Path) -> list[str]:

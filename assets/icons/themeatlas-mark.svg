@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ThemeAtlas mark">
+  <defs>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6f3bff"/>
+      <stop offset="52%" stop-color="#8d56ff"/>
+      <stop offset="100%" stop-color="#ff2ea6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="48%" r="56%">
+      <stop offset="0%" stop-color="#fff7ff" stop-opacity="0.92"/>
+      <stop offset="72%" stop-color="#ff89cf" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#ff89cf" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="104" fill="#121729"/>
+  <circle cx="256" cy="256" r="142" fill="none" stroke="url(#mark)" stroke-width="28"/>
+  <circle cx="256" cy="256" r="84" fill="url(#glow)"/>
+  <path d="M256 152 L336 256 L256 360 L176 256 Z" fill="#f7f3ff"/>
+  <path d="M256 178 L312 256 L256 334 L200 256 Z" fill="#25183a"/>
+  <path d="M256 198 L295 256 L256 314 L217 256 Z" fill="url(#mark)"/>
+  <path d="M256 220 L280 256 L256 292 L232 256 Z" fill="#fff8ff"/>
+  <circle cx="256" cy="256" r="20" fill="#fff5ff"/>
+  <circle cx="256" cy="256" r="10" fill="#231332"/>
+</svg>

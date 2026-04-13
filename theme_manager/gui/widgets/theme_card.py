@@ -15,6 +15,7 @@ import tkinter as tk
 from typing import Callable, Optional
 
 from ..api import ThemeRecord
+from ...network import fetch_bytes
 
 # Colours
 _BG_CARD = "#ffffff"
@@ -236,15 +237,19 @@ class ThemeCard(tk.Frame):
         """Download and set thumbnail in a daemon thread; silently skips on failure."""
         try:
             import io
-            import urllib.request
 
             try:
                 from PIL import Image, ImageTk  # type: ignore[import]
             except ImportError:
-                return  # Pillow not installed – keep the placeholder
+                return  # Pillow not installed - keep the placeholder
 
-            with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310
-                data = resp.read()
+            data = fetch_bytes(
+                url,
+                timeout=5,
+                max_bytes=2 * 1024 * 1024,
+                retries=1,
+                cache_ttl_seconds=2 * 24 * 3600,
+            )
 
             img = Image.open(io.BytesIO(data)).resize((56, 56), Image.LANCZOS)
             photo = ImageTk.PhotoImage(img)

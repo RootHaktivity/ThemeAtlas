@@ -2,11 +2,13 @@
 Installed Themes tab – lists all installed themes with Switch and Remove actions.
 """
 
+import subprocess
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 from ...logger import get_logger
-from ...manager import list_themes, remove_theme
+from ...manager import list_installed_apps, list_themes, remove_theme, uninstall_app
 from ...switcher import (
     switch_cursor_theme,
     switch_gtk_theme,
@@ -77,7 +79,7 @@ class InstalledTab(ttk.Frame):
         # Double-click → switch
         self._tree.bind("<Double-1>", lambda _e: self._switch_selected())
 
-        # Action bar
+        # Action bar (themes)
         action_bar = tk.Frame(self, bg=_BG, padx=14, pady=8)
         action_bar.pack(fill="x")
 
@@ -94,6 +96,62 @@ class InstalledTab(ttk.Frame):
         tk.Button(
             action_bar, text="Remove",
             command=self._remove_selected,
+            bg="#d93025", fg="white",
+            activebackground="#b31412", activeforeground="white",
+            relief="flat", padx=14, pady=5,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2", bd=0,
+        ).pack(side="left", padx=(8, 0))
+
+        # ── Desktop Customization Apps section ────────────────────────────────
+        sep = ttk.Separator(self, orient="horizontal")
+        sep.pack(fill="x", padx=14, pady=(6, 2))
+
+        tk.Label(
+            self, text="Desktop Customization Apps",
+            font=("Segoe UI", 11, "bold"),
+            bg=_BG, fg="#202124",
+            anchor="w",
+        ).pack(fill="x", padx=14, pady=(4, 2))
+
+        apps_frame = ttk.Frame(self)
+        apps_frame.pack(fill="both", padx=14, pady=(0, 4))
+
+        app_cols = ("binaries", "installed_at")
+        self._apps_tree = ttk.Treeview(
+            apps_frame, columns=app_cols,
+            show="tree headings",
+            selectmode="browse",
+            height=5,
+        )
+        self._apps_tree.heading("#0",          text="App Name",    anchor="w")
+        self._apps_tree.heading("binaries",    text="Binary",      anchor="w")
+        self._apps_tree.heading("installed_at", text="Installed",  anchor="w")
+        self._apps_tree.column("#0",           width=200, minwidth=120, stretch=True)
+        self._apps_tree.column("binaries",     width=160, minwidth=80,  stretch=True)
+        self._apps_tree.column("installed_at", width=110, minwidth=80,  stretch=False)
+
+        apps_vsb = ttk.Scrollbar(apps_frame, orient="vertical", command=self._apps_tree.yview)
+        self._apps_tree.configure(yscrollcommand=apps_vsb.set)
+        apps_vsb.pack(side="right", fill="y")
+        self._apps_tree.pack(fill="both", expand=True)
+
+        apps_action_bar = tk.Frame(self, bg=_BG, padx=14, pady=6)
+        apps_action_bar.pack(fill="x")
+
+        tk.Button(
+            apps_action_bar, text="Launch",
+            command=self._launch_selected_app,
+            bg="#1a73e8", fg="white",
+            activebackground="#1557b0", activeforeground="white",
+            relief="flat", padx=14, pady=5,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2", bd=0,
+        ).pack(side="left")
+
+        tk.Button(
+            apps_action_bar, text="Uninstall",
+            command=self._uninstall_selected_app,
             bg="#d93025", fg="white",
             activebackground="#b31412", activeforeground="white",
             relief="flat", padx=14, pady=5,
@@ -127,6 +185,15 @@ class InstalledTab(ttk.Frame):
                 )
 
         self._tree.tag_configure("category", font=("Segoe UI", 9, "bold"))
+
+        # Refresh apps tree
+        self._apps_tree.delete(*self._apps_tree.get_children())
+        for app_entry in list_installed_apps():
+            name = app_entry.get("name", "Unknown")
+            binaries = app_entry.get("binaries", [])
+            bin_names = ", ".join(Path(b).name for b in binaries[:2])
+            installed_at = (app_entry.get("installed_at") or "")[:10]
+            self._apps_tree.insert("", "end", text=name, values=(bin_names, installed_at))
 
     @staticmethod
     def _category_to_path(category: str) -> str:
@@ -195,3 +262,43 @@ class InstalledTab(ttk.Frame):
                 f"Could not remove '{name}'.\n"
                 "Check the log for details.",
             )
+
+    def _launch_selected_app(self) -> None:
+        sel = self._apps_tree.selection()
+        if not sel:
+            messagebox.showwarning("No Selection", "Select an app to launch.")
+            return
+        name = self._apps_tree.item(sel[0], "text")
+        apps = list_installed_apps()
+        target = next((a for a in apps if a.get("name") == name), None)
+        if not target:
+            return
+        for bin_path in target.get("binaries", []):
+            p = Path(bin_path)
+            if p.is_file() and "cli" not in p.name.lower():
+                try:
+                    subprocess.Popen([str(p)], start_new_session=True)
+                    self._app.set_status(f"Launched {p.name}")
+                    return
+                except OSError as exc:
+                    messagebox.showerror("Launch Failed", str(exc))
+                    return
+        messagebox.showwarning("No Launcher", f"No launchable binary found for '{name}'.")
+
+    def _uninstall_selected_app(self) -> None:
+        sel = self._apps_tree.selection()
+        if not sel:
+            messagebox.showwarning("No Selection", "Select an app to uninstall.")
+            return
+        name = self._apps_tree.item(sel[0], "text")
+        if not messagebox.askyesno(
+            "Confirm Uninstall",
+            f"Uninstall '{name}'?\n\nThis removes the binary and data files.",
+        ):
+            return
+        ok, message = uninstall_app(name)
+        self._app.set_status(message)
+        if ok:
+            self.refresh()
+        else:
+            messagebox.showerror("Uninstall Failed", message)

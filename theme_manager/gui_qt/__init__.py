@@ -1,4 +1,4 @@
-"""PySide6 GUI entrypoint for Linux Theme Manager."""
+"""PySide6 GUI entrypoint for ThemeAtlas."""
 
 from .app import launch_gui
 

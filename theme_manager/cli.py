@@ -1,5 +1,5 @@
 """
-Command-line interface for Linux Theme Manager.
+Command-line interface for ThemeAtlas.
 
 Commands
 --------
@@ -17,7 +17,7 @@ from .dependencies import ensure_gui_dependencies
 from .environment import detect_environment
 from .extensions import install_user_themes_extension
 from .flatpak import apply_flatpak_theme_overrides, is_flatpak_available
-from .installer import install_from_archive, install_from_deb, install_from_ppa
+from .installer import install_from_archive, install_from_deb, install_from_ppa, preview_archive_changes
 from .logger import get_logger
 from .manager import list_themes, remove_theme
 from .switcher import (
@@ -35,7 +35,29 @@ log = get_logger(__name__)
 
 def _cmd_install(args: argparse.Namespace) -> int:
     if args.archive:
-        names = install_from_archive(args.archive, system_wide=args.system)
+        if args.dry_run:
+            preview = preview_archive_changes(args.archive, system_wide=args.system)
+            operations = preview.get("operations", [])
+            script_roots = preview.get("script_roots", [])
+            if not operations:
+                log.warning("Dry run found no installable theme roots.")
+                return 1
+            print("Planned filesystem changes:")
+            for op in operations:
+                print(f"  [{op.get('kind')}] {op.get('name')} -> {op.get('destination')}")
+            if script_roots:
+                print("\nInstall scripts detected (execution disabled unless --allow-install-scripts is set):")
+                for root in script_roots:
+                    print(f"  - {root}")
+            return 0
+
+        names = install_from_archive(
+            args.archive,
+            system_wide=args.system,
+            allow_install_scripts=args.allow_install_scripts,
+            sandbox_install_scripts=not args.no_script_sandbox,
+            allow_source_build=args.allow_source_build,
+        )
         if names:
             log.info("Installed theme(s): %s", ", ".join(names))
             return 0
@@ -162,18 +184,18 @@ def _print_current_themes() -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="theme-manager",
+        prog="themeatlas",
         description="Cross-distro Linux theme installer and manager.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  theme-manager install --archive ~/downloads/Orchis.tar.xz\n"
-            "  theme-manager install --ppa nikos.p/orchis-theme --packages orchis-theme\n"
-            "  theme-manager install --deb ~/downloads/papirus-icon-theme.deb\n"
-            "  theme-manager list\n"
-            "  theme-manager switch --gtk Orchis-Dark --icons Papirus --flatpak\n"
-            "  theme-manager remove Orchis-Dark --type gtk\n"
-            "  theme-manager status\n"
+            "  themeatlas install --archive ~/downloads/Orchis.tar.xz\n"
+            "  themeatlas install --ppa nikos.p/orchis-theme --packages orchis-theme\n"
+            "  themeatlas install --deb ~/downloads/papirus-icon-theme.deb\n"
+            "  themeatlas list\n"
+            "  themeatlas switch --gtk Orchis-Dark --icons Papirus --flatpak\n"
+            "  themeatlas remove Orchis-Dark --type gtk\n"
+            "  themeatlas status\n"
         ),
     )
     parser.add_argument("--version", action="version", version="%(prog)s 1.0.0")
@@ -205,6 +227,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p_install.add_argument(
         "--system", action="store_true",
         help="Install into system directories instead of user home (requires sudo).",
+    )
+    p_install.add_argument(
+        "--dry-run", action="store_true",
+        help="Preview file/path changes without applying them.",
+    )
+    p_install.add_argument(
+        "--allow-install-scripts", action="store_true",
+        help="Allow archive install scripts if present (disabled by default).",
+    )
+    p_install.add_argument(
+        "--no-script-sandbox", action="store_true",
+        help="Run install scripts without sandboxing (sandbox is enabled by default).",
+    )
+    p_install.add_argument(
+        "--allow-source-build", action="store_true",
+        help="Build theme from source if packaged release not found (disabled by default).",
     )
 
     # ── list ───────────────────────────────────────────────────────────────────

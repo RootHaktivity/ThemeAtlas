@@ -9,9 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  python-dist:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,11 +34,86 @@ jobs:
       - name: Build distribution artifacts
         run: python -m build
 
-      - name: Upload build artifacts
+      - name: Upload wheel/sdist
         uses: actions/upload-artifact@v4
         with:
           name: release-dist
           path: dist/*
+
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build AppDir
+        run: bash scripts/build_appimage.sh
+
+      - name: Build AppImage
+        run: |
+          set -e
+          mkdir -p build/tools
+          curl -L -o build/tools/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x build/tools/appimagetool
+          ARCH=x86_64 ./build/tools/appimagetool build/appimage/ThemeAtlas.AppDir dist/ThemeAtlas-x86_64.AppImage
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-appimage
+          path: dist/ThemeAtlas-x86_64.AppImage
+
+  flatpak:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Flatpak toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Build Flatpak bundle
+        run: |
+          set -e
+          mkdir -p dist
+          flatpak-builder --force-clean --install-deps-from=flathub --repo=build/flatpak-repo build/flatpak-build packaging/flatpak/io.themeatlas.ThemeAtlas.yaml
+          flatpak build-bundle build/flatpak-repo dist/ThemeAtlas.flatpak io.themeatlas.ThemeAtlas
+
+      - name: Upload Flatpak
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-flatpak
+          path: dist/ThemeAtlas.flatpak
+
+  release:
+    needs: [python-dist, appimage, flatpak]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download wheel/sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Download AppImage
+        uses: actions/download-artifact@v4
+        with:
+          name: release-appimage
+          path: dist
+
+      - name: Download Flatpak
+        uses: actions/download-artifact@v4
+        with:
+          name: release-flatpak
+          path: dist
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

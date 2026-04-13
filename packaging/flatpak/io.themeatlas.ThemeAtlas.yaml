@@ -1,0 +1,27 @@
+app-id: io.themeatlas.ThemeAtlas
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: themeatlas
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --filesystem=home
+  - --talk-name=org.freedesktop.Flatpak
+modules:
+  - name: python3-pillow
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-build-isolation --prefix=/app Pillow>=9.0
+  - name: themeatlas
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-build-isolation --prefix=/app .
+      - install -Dm644 assets/themeatlas.desktop /app/share/applications/themeatlas.desktop
+      - install -Dm644 assets/icons/themeatlas-icon.svg /app/share/icons/hicolor/scalable/apps/themeatlas.svg
+      - install -Dm644 assets/icons/png/themeatlas-icon-256.png /app/share/icons/hicolor/256x256/apps/themeatlas.png
+    sources:
+      - type: dir
+        path: ../../

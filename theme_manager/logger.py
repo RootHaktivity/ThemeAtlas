@@ -3,8 +3,8 @@ import os
 import sys
 from datetime import datetime
 
-LOG_DIR = os.path.expanduser("~/.local/share/linux-theme-manager/logs")
-LOG_FILE = os.path.join(LOG_DIR, f"theme-manager-{datetime.now().strftime('%Y%m%d')}.log")
+LOG_DIR = os.path.expanduser("~/.local/share/themeatlas/logs")
+LOG_FILE = os.path.join(LOG_DIR, f"themeatlas-{datetime.now().strftime('%Y%m%d')}.log")
 
 _RESET = "\033[0m"
 _LEVEL_COLORS = {
@@ -24,7 +24,7 @@ class _ColorFormatter(logging.Formatter):
         return super().format(record)
 
 
-def get_logger(name: str = "theme-manager") -> logging.Logger:
+def get_logger(name: str = "themeatlas") -> logging.Logger:
     logger = logging.getLogger(name)
     if logger.handlers:
         return logger

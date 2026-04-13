@@ -14,15 +14,15 @@ def _post_install_bootstrap() -> None:
     try:
         from theme_manager.dependencies import ensure_gui_dependencies
     except Exception as exc:  # noqa: BLE001
-        print(f"[theme-manager] Skipping GUI dependency bootstrap: {exc}")
+        print(f"[themeatlas] Skipping GUI dependency bootstrap: {exc}")
         return
 
     ok = ensure_gui_dependencies(auto_install=True)
     if ok:
-        print("[theme-manager] GUI dependencies are ready.")
+        print("[themeatlas] GUI dependencies are ready.")
     else:
         print(
-            "[theme-manager] GUI dependencies could not be fully installed automatically.\n"
+            "[themeatlas] GUI dependencies could not be fully installed automatically.\n"
             "Run 'python3 main.py gui' and follow the prompted install step, or install PySide6 manually."
         )
 
@@ -43,7 +43,7 @@ class DevelopCommand(develop):
         _post_install_bootstrap()
 
 setup(
-    name="linux-theme-manager",
+    name="themeatlas",
     version="1.0.0",
     description="Cross-distro Linux theme installer and manager",
     long_description=(
@@ -60,6 +60,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
+            "themeatlas=theme_manager.cli:main",
             "theme-manager=theme_manager.cli:main",
         ],
     },
@@ -68,7 +69,7 @@ setup(
         "develop": DevelopCommand,
     },
     extras_require={
-        # pip install linux-theme-manager[thumbnails]
+        # pip install themeatlas[thumbnails]
         # kept as compatibility alias; Pillow is already in install_requires
         "thumbnails": [],
     },

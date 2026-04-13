@@ -7,14 +7,14 @@ from tkinter import filedialog, messagebox, ttk
 
 from ..environment import detect_environment
 from ..logger import get_logger
-from .tabs.available import AvailableTab
+from .tabs.available import AppToolingTab, AvailableTab
 from .tabs.installed import InstalledTab
 from .tabs.settings import SettingsTab
 from .worker import BackgroundWorker
 
 log = get_logger(__name__)
 
-_TITLE   = "Linux Theme Manager"
+_TITLE   = "ThemeAtlas"
 _WIN_W   = 960
 _WIN_H   = 700
 _MIN_W   = 720
@@ -32,8 +32,16 @@ _BORDER  = "#d7dde8"
 _FONT_UI = "Cantarell"
 
 
+def _should_prompt_source_build(error_message: str) -> bool:
+    lowered = (error_message or "").lower()
+    return (
+        "source build required" in lowered
+        or "source files rather than a packaged theme release" in lowered
+    )
+
+
 class ThemeManagerApp(tk.Tk):
-    """Root Tkinter window for Linux Theme Manager."""
+    """Root Tkinter window for ThemeAtlas."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -140,7 +148,7 @@ class ThemeManagerApp(tk.Tk):
         header.pack(fill="x")
 
         tk.Label(
-            header, text="Linux Theme Manager",
+            header, text="ThemeAtlas",
             font=(_FONT_UI, 17, "bold"),
             bg="#12203d", fg="#f7fbff",
         ).pack(side="left", anchor="w")
@@ -170,12 +178,14 @@ class ThemeManagerApp(tk.Tk):
         self.notebook.pack(fill="both", expand=True)
 
         self.available_tab = AvailableTab(self.notebook, self)
+        self.apps_tab = AppToolingTab(self.notebook, self)
         self.installed_tab = InstalledTab(self.notebook, self)
         self.settings_tab  = SettingsTab(self.notebook, self)
 
-        self.notebook.add(self.available_tab, text="   Available Themes   ")
+        self.notebook.add(self.available_tab, text="   Themes   ")
+        self.notebook.add(self.apps_tab, text="   Apps   ")
         self.notebook.add(self.installed_tab, text="   Installed   ")
-        self.notebook.add(self.settings_tab,  text="   Settings   ")
+        self.notebook.add(self.settings_tab,  text="   Preferences   ")
 
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_change)
 
@@ -203,7 +213,7 @@ class ThemeManagerApp(tk.Tk):
 
     def _on_tab_change(self, _event: tk.Event) -> None:
         idx = self.notebook.index(self.notebook.select())
-        if idx == 1:   # Installed tab
+        if idx == 2:   # Installed tab
             self.installed_tab.refresh()
 
     def _on_close(self) -> None:
@@ -224,15 +234,51 @@ class ThemeManagerApp(tk.Tk):
             return
 
         self.set_status(f"Installing {path} …")
+        self._submit_file_install(path, allow_source_build=False)
 
+    def _submit_file_install(self, path: str, *, allow_source_build: bool) -> None:
         def _do() -> list[str]:
             from ..installer import install_from_archive
-            return install_from_archive(path)
+            progress_log: list[str] = []
+            names = install_from_archive(
+                path,
+                allow_source_build=allow_source_build,
+                progress_callback=progress_log.append,
+            )
+            if not names:
+                source_required = next(
+                    (line for line in progress_log if "Source build required" in line),
+                    "",
+                )
+                if source_required:
+                    raise ValueError(source_required)
+
+                # Check progress log for build failure messages (more lenient matching)
+                error_keywords = (
+                    "meson setup failed", "meson install failed",
+                    "build failed", "install failed",
+                    "configured failed", "autoconf",
+                    "dart-sass", "sass",
+                )
+                source_build_failed = None
+                for line in reversed(progress_log):
+                    line_lower = line.lower()
+                    if any(keyword in line_lower for keyword in error_keywords):
+                        source_build_failed = line
+                        break
+
+                if source_build_failed:
+                    raise ValueError(source_build_failed)
+
+                raise ValueError(
+                    "No installable theme directories were found in this archive."
+                )
+            return names
 
         self.worker.submit(
             _do,
             on_done=lambda names: self.after(0, self._on_file_install_done, names),
-            on_error=lambda e:    self.after(0, self._on_file_install_error, e),
+            on_error=lambda e: self.after(0, self._on_file_install_error, path, allow_source_build, e),
         )
 
     def _on_file_install_done(self, names: list[str]) -> None:
@@ -241,17 +287,54 @@ class ThemeManagerApp(tk.Tk):
         self.installed_tab.refresh()
         messagebox.showinfo("Installed", f"Successfully installed:\n• {label}")
 
-    def _on_file_install_error(self, exc: Exception) -> None:
-        self.set_status(f"Installation failed: {exc}")
-        messagebox.showerror("Installation Failed", str(exc))
+    def _on_file_install_error(self, path: str, allow_source_build: bool, exc: Exception) -> None:
+        msg = str(exc)
+        source_hint = _should_prompt_source_build(msg)
+        if (not allow_source_build) and source_hint:
+            consent = messagebox.askyesno(
+                "Source Build Required",
+                "This archive appears to contain source code instead of a pre-built theme release.\n\n"
+                "Build from source can run project build tools and may install build dependencies.\n"
+                "ThemeAtlas still restricts installation to theme artifacts, but only continue if you trust this source.\n\n"
+                "Proceed with source build?",
+            )
+            if consent:
+                self.set_status("Retrying with source build enabled…")
+                self._submit_file_install(path, allow_source_build=True)
+                return
+
+        self.set_status(f"Installation failed: {msg}")
+        
+        error_guidance = msg
+        if "dart-sass" in msg.lower() or ("sass" in msg.lower() and "requires" in msg.lower()):
+            error_guidance = (
+                f"{msg}\n\n"
+                "FIX: Install dart-sass using your package manager:\n"
+                "  sudo apt install dart-sass  # Ubuntu/Debian\n"
+                "  sudo dnf install dart-sass  # Fedora\n"
+                "  sudo pacman -S dart-sass    # Arch\n\n"
+                "Then try installing again."
+            )
+        elif "build failed" in msg.lower():
+            error_guidance = (
+                f"{msg}\n\n"
+                "This project requires build tools that may be missing.\n"
+                "Common solutions:\n"
+                "1. Install build essentials: sudo apt install build-essential\n"
+                "2. Install meson: sudo apt install meson\n"
+                "3. Try a pre-built version from your package manager\n\n"
+                "For specific help, search the project's GitHub issues."
+            )
+        
+        messagebox.showerror("Installation Failed", error_guidance)
 
     # ── About ──────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _show_about() -> None:
         messagebox.showinfo(
-            "About Linux Theme Manager",
-            "Linux Theme Manager  v1.0.0\n\n"
+            "About ThemeAtlas",
+            "ThemeAtlas  v1.0.0\n\n"
             "Cross-distro installer and manager for GTK,\n"
             "icon, cursor, and GNOME Shell themes.\n\n"
             "Built with Python + Tkinter\n"

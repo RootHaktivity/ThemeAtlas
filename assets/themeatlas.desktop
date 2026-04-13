@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ThemeAtlas
+Comment=Cross-distro theme browser, preview, and installer
+Exec=themeatlas gui
+Icon=themeatlas
+Terminal=false
+Categories=Utility;Settings;DesktopSettings;
+StartupNotify=true
+StartupWMClass=themeatlas
+Keywords=theme;gtk;icons;shell;cursors;desktop;

@@ -3,13 +3,11 @@ Theme search API — tries the opendesktop/pling OCS API for gnome-look.org
 content, and falls back gracefully to a curated set of mock records.
 """
 
-import json
-import ssl
-import urllib.request
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from ..logger import get_logger
+from ..network import fetch_json
 
 log = get_logger(__name__)
 
@@ -33,7 +31,7 @@ class ThemeRecord:
     name:          str
     summary:       str
     description:   str
-    kind:          str   # "gtk" | "icons" | "shell" | "cursors"
+    kind:          str   # "gtk" | "icons" | "shell" | "cursors" | "app/tooling"
     score:         float
     downloads:     int
     author:        str
@@ -43,6 +41,7 @@ class ThemeRecord:
     updated:       str
     source:        str = "mock"   # "api" or "mock"
     artifact_type: str = "theme"  # "theme" | "extension" | "source"
+    category: str = ""            # optional app/tooling category label
     variants:      list | None = None  # [(name, url), ...] for multi-variant themes
     compatibility: str = ""        # e.g. "GNOME/XFCE" or distro label
     install_verified: bool = False  # True when install path is known reliable
@@ -50,6 +49,8 @@ class ThemeRecord:
     install_method: str = "archive"  # archive | package-manager | manual
     supported: bool = True          # computed at runtime for current environment
     support_note: str = ""         # short reason shown in UI
+    checksum_sha256: str = ""      # optional SHA256 digest if source provides it
+    signature_url: str = ""        # optional detached signature URL
 
 
 # ── Built-in mock themes ────────────────────────────────────────────────────────
@@ -215,6 +216,48 @@ MOCK_THEMES: list[ThemeRecord] = [
         detail_url="https://www.gnome-look.org/p/1355701/",
         updated="2023-10-15",
     ),
+    # GNOME Shell extensions (curated fallback for extension browsing)
+    ThemeRecord(
+        id="mock-ext-001", kind="app/tooling",
+        name="Quick Settings Tweaks",
+        summary="Customize GNOME Quick Settings layout and controls",
+        description=(
+            "GNOME Shell extension that adds/removes quick settings items and "
+            "improves quick settings behavior."
+        ),
+        score=84.0, downloads=120_000, author="qwreey",
+        thumbnail_url="",
+        download_url="https://github.com/qwreey/quick-settings-tweaks/archive/refs/heads/master.zip",
+        detail_url="https://github.com/qwreey/quick-settings-tweaks",
+        updated="2026-01-15",
+        source="mock",
+        artifact_type="extension",
+        category="settings",
+        compatibility="GNOME Shell 48, 49",
+        install_verified=True,
+        install_method="archive",
+        supported=True,
+    ),
+    ThemeRecord(
+        id="mock-ext-002", kind="app/tooling",
+        name="Animation Tweaks",
+        summary="Fine-grained animation controls for GNOME Shell",
+        description=(
+            "GNOME Shell extension for adjusting animation speed and transition behavior."
+        ),
+        score=81.0, downloads=95_000, author="Selenium-H",
+        thumbnail_url="",
+        download_url="https://github.com/Selenium-H/Animation-Tweaks/archive/refs/heads/master.zip",
+        detail_url="https://github.com/Selenium-H/Animation-Tweaks",
+        updated="2025-11-02",
+        source="mock",
+        artifact_type="extension",
+        category="settings",
+        compatibility="GNOME Shell",
+        install_verified=True,
+        install_method="archive",
+        supported=True,
+    ),
 ]
 
 
@@ -288,6 +331,19 @@ def _pick_preview_url(item: dict) -> str:
     return ""
 
 
+def _extract_sha256_from_item(item: dict) -> str:
+    candidates = [
+        item.get("checksum"),
+        item.get("sha256"),
+        item.get("checksum_sha256"),
+    ]
+    for value in candidates:
+        text = str(value or "").strip().lower()
+        if len(text) == 64 and all(ch in "0123456789abcdef" for ch in text):
+            return text
+    return ""
+
+
 def _collect_download_variants(item: dict) -> list[tuple[str, str]]:
     """Collect all available downloadable file variants from a pling item.
     
@@ -347,6 +403,8 @@ def _parse_response(items: list[dict], kind_hint: str) -> list[ThemeRecord]:
             updated=item.get("changed") or item.get("created") or "",
             source="api",
             variants=variants_to_store,
+            checksum_sha256=_extract_sha256_from_item(item),
+            signature_url=str(item.get("signature") or item.get("sig_url") or "").strip(),
         ))
     return results
 
@@ -389,13 +447,10 @@ def search_themes(query: str, kind: str = "all", page: int = 1) -> list[ThemeRec
     log.debug("API request: %s", url)
 
     try:
-        ctx = ssl.create_default_context()
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "linux-theme-manager/1.0"},
-        )
-        with urllib.request.urlopen(req, context=ctx, timeout=_TIMEOUT) as resp:
-            raw: dict = json.loads(resp.read().decode("utf-8", errors="replace"))
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+            raise ValueError(f"Unsupported URL scheme for API request: {url}")
+        raw: dict = fetch_json(url, timeout=_TIMEOUT, retries=2, cache_ttl_seconds=90)
 
         items = raw.get("ocs", {}).get("data") or []
         if isinstance(items, dict):

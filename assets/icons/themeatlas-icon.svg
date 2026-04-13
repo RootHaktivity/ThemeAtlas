@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ThemeAtlas icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#24153a"/>
+      <stop offset="55%" stop-color="#161a2e"/>
+      <stop offset="100%" stop-color="#0c1020"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6f3bff"/>
+      <stop offset="52%" stop-color="#8d56ff"/>
+      <stop offset="100%" stop-color="#ff2ea6"/>
+    </linearGradient>
+    <linearGradient id="needleOuter" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f7f3ff"/>
+      <stop offset="100%" stop-color="#cbbcff"/>
+    </linearGradient>
+    <linearGradient id="needleInner" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6f3bff"/>
+      <stop offset="100%" stop-color="#ff2ea6"/>
+    </linearGradient>
+    <radialGradient id="coreGlow" cx="50%" cy="48%" r="58%">
+      <stop offset="0%" stop-color="#fff7ff" stop-opacity="0.95"/>
+      <stop offset="70%" stop-color="#ff89cf" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ff89cf" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect x="22" y="22" width="468" height="468" rx="112" fill="url(#bg)"/>
+
+  <g filter="url(#softShadow)">
+    <circle cx="256" cy="256" r="148" fill="none" stroke="url(#ring)" stroke-width="30"/>
+    <circle cx="256" cy="256" r="108" fill="none" stroke="#9f83ff" stroke-opacity="0.28" stroke-width="6"/>
+  </g>
+
+  <g>
+    <circle cx="256" cy="256" r="88" fill="url(#coreGlow)"/>
+    <path d="M256 150 L334 252 L256 362 L178 252 Z" fill="url(#needleOuter)" fill-opacity="0.98"/>
+    <path d="M256 176 L311 252 L256 332 L201 252 Z" fill="#25183a"/>
+    <path d="M256 194 L295 252 L256 312 L217 252 Z" fill="url(#needleInner)"/>
+    <path d="M256 216 L280 252 L256 288 L232 252 Z" fill="#fff8ff" fill-opacity="0.98"/>
+    <circle cx="256" cy="256" r="22" fill="#fff5ff"/>
+    <circle cx="256" cy="256" r="11" fill="#231332"/>
+  </g>
+
+  <g fill="#e6ebff" fill-opacity="0.9">
+    <circle cx="119" cy="151" r="4"/>
+    <circle cx="389" cy="151" r="4"/>
+    <circle cx="119" cy="361" r="4"/>
+    <circle cx="389" cy="361" r="4"/>
+  </g>
+</svg>

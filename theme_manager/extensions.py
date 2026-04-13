@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import ast
 import os
+import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -37,6 +39,62 @@ def _run_silent(*cmd: str, timeout: int = 15) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         timeout=timeout,
+    )
+
+
+def _read_extension_metadata(extension_dir: Path) -> dict:
+    meta = extension_dir / "metadata.json"
+    if not meta.is_file():
+        return {}
+    try:
+        data = json.loads(meta.read_text(encoding="utf-8", errors="ignore"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def get_current_gnome_shell_major() -> Optional[str]:
+    """Return current GNOME Shell major version (e.g. '46'), or None if unknown."""
+    try:
+        result = _run_silent("gnome-shell", "--version")
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(r"GNOME Shell\s+(\d+)", result.stdout or "")
+    if not match:
+        return None
+    return match.group(1)
+
+
+def extension_is_compatible_with_shell(extension_dir: Path) -> tuple[bool, str]:
+    """Return (is_compatible, reason) for a local extension directory."""
+    metadata = _read_extension_metadata(extension_dir)
+    if not metadata:
+        return True, ""
+
+    supported_raw = metadata.get("shell-version")
+    if not isinstance(supported_raw, list) or not supported_raw:
+        return True, ""
+
+    current_major = get_current_gnome_shell_major()
+    if not current_major:
+        return True, ""
+
+    supported_majors: list[str] = []
+    for value in supported_raw:
+        major = str(value).strip().split(".", 1)[0]
+        if major and major not in supported_majors:
+            supported_majors.append(major)
+
+    if not supported_majors or current_major in supported_majors:
+        return True, ""
+
+    uuid = str(metadata.get("uuid") or extension_dir.name)
+    supported_text = ", ".join(supported_majors)
+    return False, (
+        f"Extension '{uuid}' supports GNOME Shell {supported_text}, "
+        f"but current GNOME Shell is {current_major}."
     )
 
 

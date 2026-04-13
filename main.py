@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Entry point for Linux Theme Manager."""
+"""Entry point for ThemeAtlas."""
 
 from theme_manager.cli import main
 

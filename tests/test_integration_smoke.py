@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from theme_manager.extractor import extract_archive
+from theme_manager.installer import preview_archive_changes
 from theme_manager.gui.api import ThemeRecord
 from theme_manager.gui_qt.app import AvailableTab
 
@@ -83,6 +84,54 @@ class TestIntegrationSmoke(unittest.TestCase):
         with patch("theme_manager.gui_qt.app.install_from_package", return_value=False):
             with self.assertRaises(RuntimeError):
                 AvailableTab._install_package_record(record)
+
+    def test_extract_archive_rejects_zip_path_traversal(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            archive = tmp / "bad-theme.zip"
+            escaped_target = tmp / "escaped.txt"
+
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("../escaped.txt", "pwned")
+
+            with self.assertRaises(ValueError):
+                extract_archive(str(archive), system_wide=False)
+
+            self.assertFalse(escaped_target.exists())
+
+    def test_preview_archive_changes_lists_destination_paths(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            archive = tmp / "theme.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("CoolTheme/gtk-3.0/gtk.css", "/* test */")
+
+            preview = preview_archive_changes(str(archive), system_wide=False)
+
+        self.assertIn("operations", preview)
+        self.assertTrue(preview["operations"])
+        self.assertEqual(preview["operations"][0]["kind"], "gtk")
+        self.assertIn(".local/share/themes", preview["operations"][0]["destination"])
+
+    def test_extract_archive_skips_scripts_by_default(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            archive = tmp / "scripted.zip"
+            script_marker = tmp / "script_ran.txt"
+            user_themes = tmp / "user_themes"
+            user_icons = tmp / "user_icons"
+            user_shell = tmp / "user_shell"
+
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("ScriptTheme/gtk-3.0/gtk.css", "/* test */")
+                zf.writestr("ScriptTheme/install.sh", f"#!/usr/bin/env bash\necho yes > '{script_marker}'\n")
+
+            with patch("theme_manager.extractor.USER_THEMES_DIR", user_themes), \
+                 patch("theme_manager.extractor.USER_ICONS_DIR", user_icons), \
+                 patch("theme_manager.extractor.USER_SHELL_THEMES_DIR", user_shell):
+                extract_archive(str(archive), system_wide=False)
+
+            self.assertFalse(script_marker.exists())
 
 
 if __name__ == "__main__":

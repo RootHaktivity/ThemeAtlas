@@ -1,4 +1,4 @@
-"""GUI package for Linux Theme Manager (Tkinter)."""
+"""GUI package for ThemeAtlas (Tkinter)."""
 
 
 from ..dependencies import ensure_gui_dependencies

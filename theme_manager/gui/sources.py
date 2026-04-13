@@ -15,15 +15,15 @@ The registry searches all enabled sources and deduplicates by name.
 from __future__ import annotations
 
 import json
+import base64
 import re
 import shutil
-import ssl
 import subprocess
-import urllib.request
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from abc import ABC, abstractmethod
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from .api import (
     MOCK_THEMES, ThemeRecord,
@@ -31,11 +31,12 @@ from .api import (
     _parse_response, _safe_float, _safe_int,
 )
 from ..logger import get_logger
+from ..network import fetch_json
 
 log = get_logger(__name__)
 
 _GITHUB_API = "https://api.github.com/search/repositories"
-_CFG_DIR = Path.home() / ".config" / "linux-theme-manager"
+_CFG_DIR = Path.home() / ".config" / "themeatlas"
 _CUSTOM_SOURCES_FILE = _CFG_DIR / "custom_sources.json"
 
 # Map theme kind → GitHub topic tag
@@ -46,21 +47,188 @@ _KIND_TO_TOPIC: dict[str, str] = {
     "cursors": "cursor-theme",
 }
 _TOPIC_TO_KIND: dict[str, str] = {v: k for k, v in _KIND_TO_TOPIC.items()}
+_VALID_KINDS: set[str] = {"all", "gtk", "icons", "shell", "cursors", "app/tooling"}
+
+_GITHUB_THEME_HINTS: dict[str, tuple[str, ...]] = {
+    "gtk": ("gtk theme", "theme", "adwaita", "orchis", "whitesur", "materia", "arc"),
+    "icons": ("icon theme", "icons", "papirus", "numix", "breeze"),
+    "shell": ("gnome shell theme", "shell theme", "user-theme", "user theme"),
+    "cursors": ("cursor theme", "cursors", "xcursor", "bibata"),
+}
+
+_GITHUB_NON_THEME_HINTS: tuple[str, ...] = (
+    "application", "app", "gtk app", "desktop app", "tool", "manager", "editor",
+    "plugin", "daemon", "service", "library", "sdk", "cli",
+)
+
+_GITHUB_APP_HINTS: tuple[str, ...] = (
+    "application", "app", "desktop app", "tool", "utility", "cli", "terminal",
+    "manager", "editor", "extension", "gtk4", "qt6", "libadwaita",
+)
+
+_DESKTOP_CUSTOMIZATION_ALLOWLIST: tuple[str, ...] = (
+    "gradience",
+    "gnome-tweaks",
+    "gnome-tweak-tool",
+    "gnome-control-center",
+    "nwg-look",
+    "lxappearance",
+    "qt5ct",
+    "qt6ct",
+    "kvantum-manager",
+    "ocs-url",
+    "plasma-browser-integration",
+)
+
+_DESKTOP_CUSTOMIZATION_CONTEXT_HINTS: tuple[str, ...] = (
+    "theme", "theming", "appearance", "style", "accent", "adwaita",
+    "icon", "cursor", "wallpaper", "desktop customization", "customization",
+    "gnome", "kde", "plasma", "xfce", "cinnamon", "mate", "budgie",
+    "shell", "gtk", "libadwaita", "kvantum", "qt5ct", "qt6ct", "lxappearance", "nwg-look",
+)
+
+_DESKTOP_CUSTOMIZATION_ACTION_HINTS: tuple[str, ...] = (
+    "customize", "customizer", "tweak", "tweaks", "switch", "switcher", "manager",
+    "installer", "editor", "configurator", "chooser", "picker", "settings", "control center",
+    "theme editor", "color scheme", "palette",
+)
+
+_DESKTOP_CUSTOMIZATION_GUI_HINTS: tuple[str, ...] = (
+    "gui", "gtk", "gtk3", "gtk4", "qt", "qt5", "qt6", "libadwaita",
+    "desktop app", "control center", "settings", "gnome", "kde", "plasma", "xfce",
+)
+
+_GITHUB_THEMING_TOOL_HINTS: tuple[str, ...] = (
+    "tool", "utility", "manager", "switcher", "installer", "tweak", "tweaks",
+    "editor", "generator", "builder", "configurator", "customizer", "patcher", "extension",
+)
+
+SORT_MODES: tuple[str, ...] = (
+    "relevance",
+    "highest-rated",
+    "popular",
+    "trending",
+)
+
+_DESKTOP_CUSTOMIZATION_NEGATIVE_HINTS: tuple[str, ...] = (
+    "monitor cpu", "gpu usage", "network usage", "system monitor", "video player", "music player",
+    "browser", "mail client", "messaging", "diff and merge", "ide", "compiler", "sdk",
+    "dotfiles", "ansible role", "ansible-role",
+)
+
+_DESKTOP_CUSTOMIZATION_CLI_HINTS: tuple[str, ...] = (
+    " cli", "command line", "terminal", "shell script", "bash script", "daemon", "library", "headless",
+)
+
+
+def _slug_parts(*values: str) -> set[str]:
+    parts: set[str] = set()
+    for value in values:
+        for raw in re.split(r"[^a-z0-9]+", (value or "").lower()):
+            if raw:
+                parts.add(raw)
+    return parts
+
+
+def _matches_customization_allowlist(*values: str) -> bool:
+    joined = " ".join((value or "").lower() for value in values)
+    if any(token in joined for token in _DESKTOP_CUSTOMIZATION_ALLOWLIST):
+        return True
+
+    slugged = _slug_parts(*values)
+    return any(token in slugged for token in {"gradience", "qt5ct", "qt6ct", "lxappearance"})
+
+
+def _is_probably_installable_theme_repo(item: dict, kind: str) -> bool:
+    """Heuristic filter to keep likely installable theme repos and skip app/code repos."""
+    name = str(item.get("name") or "").lower()
+    desc = str(item.get("description") or "").lower()
+    topics = {str(t).lower() for t in (item.get("topics") or [])}
+    name_desc_text = f"{name} {desc}".strip()
+    text = f"{name_desc_text} {' '.join(sorted(topics))}".strip()
+
+    if not text:
+        return False
+
+    non_theme_hit = any(token in text for token in _GITHUB_NON_THEME_HINTS)
+
+    hints = _GITHUB_THEME_HINTS.get(kind, ())
+    theme_hit = any(token in text for token in hints)
+    name_desc_theme_hit = any(token in name_desc_text for token in hints)
+
+    # Topic hit helps, but should not override clear app/tool signals.
+    requested_topic = _KIND_TO_TOPIC.get(kind)
+    topic_hit = bool(requested_topic and requested_topic in topics)
+
+    # If it looks like a generic app/tool and has no theme markers, skip it.
+    if non_theme_hit and not theme_hit:
+        return False
+
+    # Shell repos are noisy on GitHub; require an explicit shell-theme marker.
+    if kind == "shell":
+        return name_desc_theme_hit
+
+    return theme_hit or topic_hit
+
+
+def _is_probably_app_tool_repo(item: dict) -> bool:
+    """Heuristic filter for app/tool repositories when searching app/tooling kind."""
+    name = str(item.get("name") or "").lower()
+    desc = str(item.get("description") or "").lower()
+    topics = {str(t).lower() for t in (item.get("topics") or [])}
+    text = f"{name} {desc} {' '.join(sorted(topics))}".strip()
+    if not text:
+        return False
+
+    full_name = str(item.get("full_name") or "").lower()
+    if _matches_customization_allowlist(name, full_name, desc, " ".join(sorted(topics))):
+        return True
+
+    # Extension repositories should be eligible for Apps/Extensions discovery.
+    if "gnome-shell-extension" in topics:
+        return True
+    if "gnome shell extension" in desc or "shell extension" in desc:
+        return True
+
+    if any(token in text for token in ("propaganda", "community", "discussion", "anime", "game")):
+        return False
+
+    if any(token in text for token in _DESKTOP_CUSTOMIZATION_NEGATIVE_HINTS):
+        return False
+
+    if any(token in text for token in _DESKTOP_CUSTOMIZATION_CLI_HINTS):
+        return False
+
+    theming_hit = any(token in text for token in _DESKTOP_CUSTOMIZATION_CONTEXT_HINTS)
+    theming_action_hit = any(token in text for token in _DESKTOP_CUSTOMIZATION_ACTION_HINTS)
+    gui_hit = any(token in text for token in _DESKTOP_CUSTOMIZATION_GUI_HINTS)
+    app_hit = any(token in text for token in _GITHUB_APP_HINTS)
+    tool_hit = any(token in text for token in _GITHUB_THEMING_TOOL_HINTS)
+
+    looks_like_theme_pack = (
+        name.endswith("-theme")
+        or "icon-theme" in name
+        or "cursor-theme" in name
+    ) and not tool_hit
+    if looks_like_theme_pack:
+        return False
+
+    return theming_hit and theming_action_hit and gui_hit and (app_hit or tool_hit)
 
 
 # ── Shared HTTP helper ─────────────────────────────────────────────────────────
 
 def _http_get(url: str, extra_headers: dict[str, str] | None = None) -> dict:
-    req = urllib.request.Request(
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+        raise ValueError(f"Unsupported URL scheme for source fetch: {url}")
+    return fetch_json(
         url,
-        headers={
-            "User-Agent": "linux-theme-manager/1.0",
-            **(extra_headers or {}),
-        },
+        extra_headers=extra_headers,
+        timeout=_TIMEOUT,
+        retries=2,
+        cache_ttl_seconds=90,
     )
-    ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, context=ctx, timeout=_TIMEOUT) as resp:
-        return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
 def _extract_pling_items(raw: dict) -> list[dict]:
@@ -98,6 +266,68 @@ def _check_github_health() -> tuple[str, str]:
         return (status, f"{remaining}/{limit} req/hr")
     except Exception as exc:  # noqa: BLE001
         return ("offline", str(exc)[:120])
+
+
+def _decode_github_contents_json(raw: dict) -> dict:
+    """Decode a GitHub contents API response containing a JSON file."""
+    encoded = raw.get("content")
+    if not isinstance(encoded, str) or not encoded.strip():
+        return {}
+    try:
+        decoded = base64.b64decode(encoded.encode("utf-8"), validate=False)
+        data = json.loads(decoded.decode("utf-8", errors="ignore"))
+    except (ValueError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _fetch_github_extension_shell_versions(full_name: str, branch: str) -> list[str]:
+    """Best-effort fetch of extension shell-version values from repository metadata.json."""
+    if not full_name:
+        return []
+
+    candidate_paths = (
+        "metadata.json",
+        "src/metadata.json",
+        "extension/metadata.json",
+    )
+
+    for rel_path in candidate_paths:
+        url = f"https://api.github.com/repos/{full_name}/contents/{rel_path}?ref={branch or 'main'}"
+        try:
+            raw = _http_get(url, extra_headers={"Accept": "application/vnd.github+json"})
+        except Exception:
+            continue
+        data = _decode_github_contents_json(raw)
+        versions = data.get("shell-version")
+        if isinstance(versions, list):
+            normalized: list[str] = []
+            for value in versions:
+                major = str(value).strip().split(".", 1)[0]
+                if major and major not in normalized:
+                    normalized.append(major)
+            if normalized:
+                return normalized
+    return []
+
+
+def _looks_like_gnome_extension_repo(name: str, description: str, topics_lower: set[str]) -> bool:
+    """Heuristic to decide whether probing metadata.json for extension compatibility is worthwhile."""
+    if "gnome-shell-extension" in topics_lower:
+        return True
+
+    text = f"{name} {description}".lower()
+    hints = (
+        "gnome shell extension",
+        "shell extension",
+        "quick settings",
+        "extension manager",
+        "metadata.json",
+    )
+    if any(token in text for token in hints):
+        return True
+
+    return name.lower().endswith("-extension")
 
 
 # ── Source base class ──────────────────────────────────────────────────────────
@@ -197,35 +427,80 @@ class GitHubSource(ThemeSource):
     name  = "github"
     label = "GitHub"
 
-    def search(self, query: str, kind: str = "all", page: int = 1) -> list[ThemeRecord]:
-        # For "all" just search the most popular gtk-theme topic to avoid hammering
-        # the API with four requests; specific kinds do a targeted topic search.
-        topic = _KIND_TO_TOPIC.get(kind, "gtk-theme")
-
-        q_parts: list[str] = [query.strip()] if query.strip() else []
-        q_parts.append(f"topic:{topic}")
-        q_parts.append("stars:>50")
-
+    @staticmethod
+    def _fetch_search_items(query_text: str, *, sort: str = "stars", per_page: int = 20, page: int = 1) -> list[dict]:
         params = {
-            "q":        " ".join(q_parts),
-            "sort":     "stars",
-            "order":    "desc",
-            "per_page": "20",
-            "page":     str(page),
+            "q": query_text,
+            "sort": sort,
+            "order": "desc",
+            "per_page": str(per_page),
+            "page": str(page),
         }
         url = _GITHUB_API + "?" + urlencode(params)
         log.debug("GitHub request: %s", url)
-
         raw = _http_get(url, extra_headers={"Accept": "application/vnd.github+json"})
-
-        # GitHub may return 403 if rate-limited
         if "items" not in raw:
             msg = raw.get("message", "Unknown GitHub API error")
             raise RuntimeError(f"GitHub API: {msg}")
+        return list(raw.get("items", []))
+
+    @staticmethod
+    def _default_app_tooling_queries() -> list[str]:
+        return [
+            "topic:gnome-shell-extension stars:>10",
+            "gnome shell extension stars:>50",
+            "gtk theme manager stars:>20",
+            "gnome tweaks stars:>20",
+            "nwg-look stars:>10",
+            "lxappearance stars:>10",
+            "qt5ct stars:>10",
+            "qt6ct stars:>10",
+            "kvantum-manager stars:>10",
+            "icon theme manager linux stars:>10",
+        ]
+
+    def search(self, query: str, kind: str = "all", page: int = 1) -> list[ThemeRecord]:
+        raw_items: list[dict] = []
+        q_parts: list[str] = [query.strip()] if query.strip() else []
+        if kind == "app/tooling":
+            if not q_parts:
+                for focused_query in self._default_app_tooling_queries():
+                    raw_items.extend(self._fetch_search_items(focused_query, per_page=8, page=page))
+            else:
+                q_parts.append("stars:>20")
+        else:
+            # For "all" just search the most popular gtk-theme topic to avoid hammering
+            # the API with four requests; specific kinds do a targeted topic search.
+            topic = _KIND_TO_TOPIC.get(kind, "gtk-theme")
+            q_parts.append(f"topic:{topic}")
+            q_parts.append("stars:>50")
+        if not raw_items:
+            raw_items = self._fetch_search_items(" ".join(q_parts), per_page=20, page=page)
 
         results: list[ThemeRecord] = []
-        for item in raw.get("items", []):
-            results.append(self._to_record(item, kind))
+        seen_ids: set[str] = set()
+        for item in raw_items:
+            item_id = str(item.get("id") or "")
+            if item_id and item_id in seen_ids:
+                continue
+            if item_id:
+                seen_ids.add(item_id)
+            record = self._to_record(item, kind)
+            if record.kind == "app/tooling":
+                if _is_probably_app_tool_repo(item):
+                    results.append(record)
+                else:
+                    log.debug(
+                        "GitHub app/tool candidate filtered: %s",
+                        item.get("full_name") or item.get("name") or "(unknown)",
+                    )
+            elif _is_probably_installable_theme_repo(item, record.kind):
+                results.append(record)
+            else:
+                log.debug(
+                    "GitHub candidate filtered as likely non-theme repo: %s",
+                    item.get("full_name") or item.get("name") or "(unknown)",
+                )
         return results
 
     def health_check(self) -> tuple[str, str]:
@@ -240,6 +515,8 @@ class GitHubSource(ThemeSource):
             if t in _TOPIC_TO_KIND:
                 kind = _TOPIC_TO_KIND[t]
                 break
+        if kind_hint == "app/tooling":
+            kind = "app/tooling"
 
         raw_name = item.get("name", "unknown")
         display   = raw_name.replace("-", " ").replace("_", " ").title()
@@ -257,11 +534,39 @@ class GitHubSource(ThemeSource):
         topics_lower = {str(t).lower() for t in topics}
         if "gnome-shell-extension" in topics_lower or "extension" in description.lower():
             artifact_type = "extension"
+        if kind == "app/tooling" and artifact_type != "extension":
+            artifact_type = "application"
+            # Keep archive_url (GitHub source ZIP) so the source-build install flow can use it
+
+        category = ""
+        compatibility = ""
+        support_note = ""
+        if kind == "app/tooling":
+            category = _infer_app_tooling_category(f"{raw_name} {description} {' '.join(sorted(topics_lower))}")
+            if artifact_type == "application":
+                support_note = "Build from source"
+
+        should_probe_extension_metadata = (
+            bool(full_name)
+            and (
+                artifact_type == "extension"
+                or (kind == "app/tooling" and _looks_like_gnome_extension_repo(raw_name, description, topics_lower))
+            )
+        )
+
+        shell_versions: list[str] = []
+        if should_probe_extension_metadata:
+            shell_versions = _fetch_github_extension_shell_versions(full_name, default_branch)
+            if shell_versions:
+                artifact_type = "extension"
+                compatibility = f"GNOME Shell {', '.join(shell_versions)}"
+            elif artifact_type == "extension":
+                compatibility = "GNOME Shell (version not declared)"
 
         return ThemeRecord(
             id           = f"gh-{item.get('id', '')}",
             name         = display,
-            summary      = description or f"GitHub · {raw_name}",
+            summary      = _compact_summary(description or f"GitHub · {raw_name}"),
             description  = description,
             kind         = kind,
             score        = round(stars / 1000, 1),   # scale ★ to ~0-100
@@ -273,6 +578,15 @@ class GitHubSource(ThemeSource):
             updated       = (item.get("pushed_at") or "")[:10],
             source        = "github",
             artifact_type = artifact_type,
+            category      = category,
+            compatibility = compatibility,
+            install_method = (
+                "source"
+                if (kind == "app/tooling" and artifact_type == "application")
+                else "archive"
+            ),
+            install_verified = True,
+            support_note = support_note,
         )
 
 
@@ -316,10 +630,10 @@ class GitHubOwnerSource(ThemeSource):
             rec = GitHubSource._to_record(item, effective_kind)
             rec.source = self.name
             results.append(rec)
-
-            def health_check(self) -> tuple[str, str]:
-                return _check_github_health()
         return results
+
+    def health_check(self) -> tuple[str, str]:
+        return _check_github_health()
 
 
 _PACKAGE_THEME_HINTS: dict[str, tuple[str, ...]] = {
@@ -327,7 +641,35 @@ _PACKAGE_THEME_HINTS: dict[str, tuple[str, ...]] = {
     "icons": ("icon", "papirus", "numix", "breeze-icon"),
     "shell": ("gnome-shell", "shell-theme", "user-theme"),
     "cursors": ("cursor", "xcursor", "bibata"),
+    "app/tooling": (
+        "tweak", "tweaks", "appearance", "theme manager", "theme switcher", "theme editor",
+        "desktop customization", "customization", "wallpaper", "icon picker", "cursor picker",
+        "kvantum", "qt5ct", "qt6ct", "lxappearance", "nwg-look", "control center", "settings",
+    ),
 }
+
+_APP_TOOLING_CATEGORY_HINTS: dict[str, tuple[str, ...]] = {
+    "appearance": ("theme", "appearance", "style", "accent", "color", "palette", "adwaita", "kvantum"),
+    "icons & cursors": ("icon", "icons", "cursor", "cursors", "pointer"),
+    "shell & panel": ("shell", "panel", "dock", "launcher", "plasma", "kwin"),
+    "wallpaper": ("wallpaper", "background", "slideshow"),
+    "settings": ("tweak", "tweaks", "settings", "control center", "desktop", "gnome", "kde", "xfce"),
+    "utilities": ("switcher", "manager", "editor", "installer", "chooser", "picker", "customizer", "tool"),
+}
+
+
+def _is_probably_desktop_customization_tool_text(text: str) -> bool:
+    value = text.lower()
+    if _matches_customization_allowlist(value):
+        return True
+    if any(token in value for token in _DESKTOP_CUSTOMIZATION_NEGATIVE_HINTS):
+        return False
+    if any(token in value for token in _DESKTOP_CUSTOMIZATION_CLI_HINTS):
+        return False
+    context_hit = any(token in value for token in _DESKTOP_CUSTOMIZATION_CONTEXT_HINTS)
+    action_hit = any(token in value for token in _DESKTOP_CUSTOMIZATION_ACTION_HINTS)
+    gui_hit = any(token in value for token in _DESKTOP_CUSTOMIZATION_GUI_HINTS)
+    return context_hit and action_hit and gui_hit
 
 
 def _infer_kind_from_text(text: str) -> str:
@@ -338,13 +680,108 @@ def _infer_kind_from_text(text: str) -> str:
         return "icons"
     if any(k in t for k in _PACKAGE_THEME_HINTS["shell"]):
         return "shell"
+    if _is_probably_desktop_customization_tool_text(t):
+        return "app/tooling"
     return "gtk"
 
 
 def _matches_kind(text: str, kind: str) -> bool:
     if kind in ("", "all"):
         return True
+    if kind == "app/tooling":
+        return _is_probably_desktop_customization_tool_text(text)
     return any(k in text.lower() for k in _PACKAGE_THEME_HINTS.get(kind, ()))
+
+
+def _infer_app_tooling_category(text: str) -> str:
+    value = text.lower()
+    for category, hints in _APP_TOOLING_CATEGORY_HINTS.items():
+        if any(token in value for token in hints):
+            return category
+    return "utilities"
+
+
+def _compact_summary(text: str, max_chars: int = 220) -> str:
+    compact = " ".join((text or "").split())
+    if len(compact) <= max_chars:
+        return compact
+
+    cut = max_chars - 1
+    boundary = compact.rfind(" ", 0, cut)
+    if boundary < int(max_chars * 0.6):
+        boundary = cut
+    return compact[:boundary].rstrip(" ,.;:-") + "..."
+
+
+def _parse_record_date(value: str) -> datetime | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _trending_score(record: ThemeRecord) -> float:
+    now = datetime.now()
+    updated_dt = _parse_record_date(record.updated)
+    days_old = (now - updated_dt).days if updated_dt else 9999
+    recency_boost = max(0.0, min(60.0, 60.0 - float(days_old)))
+
+    stars_estimate = max(0.0, float(record.score or 0.0) * 1000.0)
+    downloads = max(0.0, float(record.downloads or 0.0))
+    return (stars_estimate * 0.65) + (downloads * 0.35) + (recency_boost * 5.0)
+
+
+def sort_records(records: list[ThemeRecord], mode: str = "relevance") -> list[ThemeRecord]:
+    """Return a sorted copy of records according to the selected ranking mode."""
+    normalized = (mode or "relevance").strip().lower()
+    if normalized not in SORT_MODES:
+        normalized = "relevance"
+
+    out = list(records)
+    if normalized == "relevance":
+        return out
+
+    if normalized == "highest-rated":
+        return sorted(
+            out,
+            key=lambda r: (
+                float(r.score or 0.0),
+                int(r.downloads or 0),
+                _parse_record_date(r.updated) or datetime.min,
+                (r.name or "").lower(),
+            ),
+            reverse=True,
+        )
+
+    if normalized == "popular":
+        return sorted(
+            out,
+            key=lambda r: (
+                int(r.downloads or 0),
+                float(r.score or 0.0),
+                _parse_record_date(r.updated) or datetime.min,
+                (r.name or "").lower(),
+            ),
+            reverse=True,
+        )
+
+    # trending
+    return sorted(
+        out,
+        key=lambda r: (
+            _trending_score(r),
+            float(r.score or 0.0),
+            int(r.downloads or 0),
+            _parse_record_date(r.updated) or datetime.min,
+            (r.name or "").lower(),
+        ),
+        reverse=True,
+    )
 
 
 class AptSource(ThemeSource):
@@ -376,16 +813,17 @@ class AptSource(ThemeSource):
                 continue
             pkg, desc = line.split(" - ", 1)
             text = f"{pkg} {desc}".lower()
-            if not any(token in text for token in ("theme", "icon", "cursor", "gnome-shell", "gtk")):
+            if not any(token in text for token in ("theme", "icon", "cursor", "gnome-shell", "gtk")) and not _is_probably_desktop_customization_tool_text(text):
                 continue
             if not _matches_kind(text, kind):
                 continue
             k = _infer_kind_from_text(text)
+            category = _infer_app_tooling_category(text) if k == "app/tooling" else ""
             display = re.sub(r"[-_]+", " ", pkg).strip().title()
             out.append(ThemeRecord(
                 id=f"apt-{pkg}",
                 name=display,
-                summary=desc,
+                summary=_compact_summary(desc),
                 description=desc,
                 kind=k,
                 score=0.0,
@@ -397,6 +835,7 @@ class AptSource(ThemeSource):
                 updated="",
                 source="apt",
                 artifact_type="package",
+                category=category,
                 compatibility="Debian/Ubuntu",
                 install_verified=True,
                 package_name=pkg,
@@ -445,16 +884,17 @@ class PacmanSource(ThemeSource):
                 continue
             _repo, pkg = left.split("/", 1)
             text = f"{pkg} {desc}".lower()
-            if not any(token in text for token in ("theme", "icon", "cursor", "gnome-shell", "gtk")):
+            if not any(token in text for token in ("theme", "icon", "cursor", "gnome-shell", "gtk")) and not _is_probably_desktop_customization_tool_text(text):
                 continue
             if not _matches_kind(text, kind):
                 continue
             k = _infer_kind_from_text(text)
+            category = _infer_app_tooling_category(text) if k == "app/tooling" else ""
             display = re.sub(r"[-_]+", " ", pkg).strip().title()
             out.append(ThemeRecord(
                 id=f"pacman-{pkg}",
                 name=display,
-                summary=desc,
+                summary=_compact_summary(desc),
                 description=desc,
                 kind=k,
                 score=0.0,
@@ -466,6 +906,7 @@ class PacmanSource(ThemeSource):
                 updated="",
                 source="pacman",
                 artifact_type="package",
+                category=category,
                 compatibility="Arch",
                 install_verified=True,
                 package_name=pkg,
@@ -555,7 +996,7 @@ def add_custom_github_source(label: str, owner: str, kind: str = "all") -> str:
         label=label_clean,
         source_type="github-owner",
         owner=owner_clean,
-        kind=kind,
+        kind=kind if kind in _VALID_KINDS else "all",
         enabled=True,
     ))
     _save_custom_specs(specs)
@@ -637,7 +1078,18 @@ def search_source(
             seen.add(key)
             unique.append(r)
 
-    if unique or successful_queries > 0:
+    if unique:
+        return unique
+
+    if successful_queries > 0:
+        if not query.strip() and kind == "app/tooling":
+            fallback_extensions = [
+                t for t in MOCK_THEMES
+                if t.kind == "app/tooling" and t.artifact_type == "extension"
+            ]
+            if fallback_extensions:
+                log.info("No live app/tooling results; using curated extension fallback.")
+                return fallback_extensions
         return unique
 
     # All live sources failed — use built-in mock data

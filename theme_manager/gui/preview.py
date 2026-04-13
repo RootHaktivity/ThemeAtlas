@@ -11,15 +11,16 @@ from __future__ import annotations
 
 import re
 import tkinter as tk
-import urllib.request
 import webbrowser
 import base64
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Callable, Optional
 
 from .api import ThemeRecord
 from ..logger import get_logger
+from ..network import fetch_bytes
 
 log = get_logger(__name__)
 
@@ -285,18 +286,23 @@ def load_source_preview_image(
     if image_url.startswith("//"):
         image_url = "https:" + image_url
 
+    parsed_img = urlsplit(image_url)
+    if parsed_img.scheme not in {"https", "http"} or not parsed_img.netloc:
+        return None
+
     try:
         from PIL import Image, ImageOps  # type: ignore[import]
     except ImportError:
         return None
 
     try:
-        req = urllib.request.Request(
+        data = fetch_bytes(
             image_url,
-            headers={"User-Agent": "linux-theme-manager/1.0"},
+            timeout=20,
+            max_bytes=6 * 1024 * 1024,
+            retries=1,
+            cache_ttl_seconds=2 * 24 * 3600,
         )
-        with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
-            data = resp.read()
 
         src = Image.open(BytesIO(data)).convert("RGB")
         fitted = ImageOps.contain(src, (width, height), method=Image.Resampling.LANCZOS)
@@ -313,13 +319,18 @@ def load_source_preview_image(
 
 def _discover_preview_image_url(detail_url: str) -> str:
     """Best-effort extract of a screenshot URL from a theme detail web page."""
+    parsed_detail = urlsplit(detail_url)
+    if parsed_detail.scheme not in {"https", "http"} or not parsed_detail.netloc:
+        return ""
     try:
-        req = urllib.request.Request(
+        html_bytes = fetch_bytes(
             detail_url,
-            headers={"User-Agent": "linux-theme-manager/1.0"},
+            timeout=15,
+            max_bytes=4 * 1024 * 1024,
+            retries=1,
+            cache_ttl_seconds=1800,
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
-            html = resp.read().decode("utf-8", errors="ignore")
+        html = html_bytes.decode("utf-8", errors="ignore")
     except Exception:  # noqa: BLE001
         return ""
 
