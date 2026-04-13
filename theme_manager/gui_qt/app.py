@@ -109,6 +109,19 @@ def _should_prompt_source_build(error_message: str) -> bool:
     )
 
 
+def _is_likely_github_source_only(record: ThemeRecord) -> bool:
+    """
+    Heuristic to detect if a record appears to be a GitHub source-only theme.
+    Returns True if the record has GitHub repo info but no clear pre-built artifact.
+    """
+    if record.source != "github":
+        return False
+    # If download_url is missing or points to a GitHub repo page, likely source-only
+    url = (record.download_url or "").strip().lower()
+    has_download = url and not url.endswith("/") and ".github.com" not in url
+    return not has_download
+
+
 def _github_clone_url(record: ThemeRecord) -> str:
     """Best-effort extraction of a GitHub repo clone URL from record metadata."""
     candidates = [record.detail_url, record.download_url]
@@ -1916,6 +1929,26 @@ class AvailableTab(QWidget):
             allow_scripts = True
             self.app.record_recent_action("install-policy", f"scripts enabled for {record.name}")
 
+        # Proactive source-build consent for GitHub source-only themes
+        allow_source_build = False
+        if _is_likely_github_source_only(record):
+            source_choice = QMessageBox.question(
+                self,
+                "Source Build Required",
+                f"'{record.name}' appears to be source-only and will need a local build step.\n\n"
+                "This may run project build tools (meson, cmake, autoconf, etc.) "
+                "and install build dependencies. "
+                "Only continue if you trust this source.\n\n"
+                "Proceed with source build?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if source_choice != QMessageBox.Yes:
+                self.app.set_status(f"Cancelled source build for {record.name}")
+                return
+            allow_source_build = True
+            self.app.record_recent_action("install-policy", f"source build enabled for {record.name}")
+
         if card is not None:
             card.mark_installing()
 
@@ -1929,13 +1962,13 @@ class AvailableTab(QWidget):
             record,
             allow_scripts,
             sandbox_scripts,
-            False,
+            allow_source_build,
             done=lambda names: self._on_install_done(record, names, card),
             failed=lambda err: self._on_install_error(
                 record,
                 err,
                 card,
-                allow_source_build=False,
+                allow_source_build=allow_source_build,
                 allow_scripts=allow_scripts,
                 sandbox_scripts=sandbox_scripts,
             ),
@@ -2062,7 +2095,8 @@ class AvailableTab(QWidget):
                     "meson setup failed", "meson install failed",
                     "build failed", "install failed",
                     "configured failed", "autoconf",
-                    "dart-sass", "sass",
+                    "dart-sass", "sass", "missing dependency",
+                    "not found", "command not found",
                 )
                 source_build_failed = None
                 for line in reversed(progress_log):
@@ -2110,7 +2144,9 @@ class AvailableTab(QWidget):
                     raise ValueError(source_build_failed)
 
                 raise ValueError(
-                    "No installable theme directories were found in this archive."
+                    f"No installable theme directories were found in {record.name}. "
+                    "This may be a source-only release that requires building. "
+                    "Ensure the archive is not corrupted."
                 )
             if progress_callback:
                 progress_callback(f"Installation complete: {', '.join(names)}")
