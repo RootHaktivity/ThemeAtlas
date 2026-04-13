@@ -7,6 +7,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict, cast
 
 from .logger import get_logger
 
@@ -28,14 +29,69 @@ GTK4_CONFIG_DIR = Path.home() / ".config" / "gtk-4.0"
 _APPS_MANIFEST = Path.home() / ".local" / "share" / "themeatlas" / "installed_apps.json"
 
 
-def _load_manifest() -> list[dict]:
+class InstalledAppEntry(TypedDict):
+    name: str
+    installed_at: str
+    binaries: list[str]
+    share_dirs: list[str]
+    lib_dirs: list[str]
+
+
+def _as_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    items = cast(list[object], value)
+    return [item for item in items if isinstance(item, str)]
+
+
+def _normalize_manifest_entry(raw: object) -> InstalledAppEntry | None:
+    if not isinstance(raw, dict):
+        return None
+    raw_map = cast(dict[str, object], raw)
+
+    name = raw_map.get("name")
+    installed_at = raw_map.get("installed_at")
+    binaries = raw_map.get("binaries", [])
+    share_dirs = raw_map.get("share_dirs", [])
+    lib_dirs = raw_map.get("lib_dirs", [])
+
+    if not isinstance(name, str):
+        return None
+    if not isinstance(installed_at, str):
+        installed_at = ""
+
+    binary_paths = _as_str_list(binaries)
+    share_paths = _as_str_list(share_dirs)
+    lib_paths = _as_str_list(lib_dirs)
+
+    return {
+        "name": name,
+        "installed_at": installed_at,
+        "binaries": binary_paths,
+        "share_dirs": share_paths,
+        "lib_dirs": lib_paths,
+    }
+
+
+def _load_manifest() -> list[InstalledAppEntry]:
     try:
-        return json.loads(_APPS_MANIFEST.read_text(encoding="utf-8"))
+        raw_data: object = json.loads(_APPS_MANIFEST.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
 
+    if not isinstance(raw_data, list):
+        return []
+    raw_entries = cast(list[object], raw_data)
 
-def _save_manifest(entries: list[dict]) -> None:
+    entries: list[InstalledAppEntry] = []
+    for item in raw_entries:
+        entry = _normalize_manifest_entry(item)
+        if entry is not None:
+            entries.append(entry)
+    return entries
+
+
+def _save_manifest(entries: list[InstalledAppEntry]) -> None:
     _APPS_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     _APPS_MANIFEST.write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
@@ -58,7 +114,7 @@ def record_installed_app(
     """
     entries = _load_manifest()
     # Remove any existing entry with the same name so reinstalls are clean.
-    entries = [e for e in entries if e.get("name", "").lower() != name.lower()]
+    entries = [e for e in entries if e["name"].lower() != name.lower()]
     entries.append({
         "name": name,
         "installed_at": datetime.now(timezone.utc).isoformat(),
@@ -70,17 +126,17 @@ def record_installed_app(
     log.info("Recorded installed app: %s", name)
 
 
-def list_installed_apps() -> list[dict]:
+def list_installed_apps() -> list[InstalledAppEntry]:
     """Return all entries from the installed-apps manifest.
 
     Each entry is a dict with keys: name, installed_at, binaries, share_dirs, lib_dirs.
     Non-existent entries are pruned from the manifest automatically.
     """
     entries = _load_manifest()
-    valid = []
+    valid: list[InstalledAppEntry] = []
     for entry in entries:
         # Keep entry if at least one tracked file or directory still exists.
-        paths = entry.get("binaries", []) + entry.get("share_dirs", []) + entry.get("lib_dirs", [])
+        paths = entry["binaries"] + entry["share_dirs"] + entry["lib_dirs"]
         if any(Path(p).exists() for p in paths):
             valid.append(entry)
     if len(valid) != len(entries):
@@ -94,13 +150,13 @@ def uninstall_app(name: str) -> tuple[bool, str]:
     Returns (success, message).
     """
     entries = _load_manifest()
-    target = next((e for e in entries if e.get("name", "").lower() == name.lower()), None)
+    target = next((e for e in entries if e["name"].lower() == name.lower()), None)
     if target is None:
         return False, f"No installed-app record found for '{name}'"
 
     errors: list[str] = []
 
-    for path_str in target.get("binaries", []):
+    for path_str in target["binaries"]:
         p = Path(path_str)
         try:
             if p.is_file():
@@ -109,7 +165,7 @@ def uninstall_app(name: str) -> tuple[bool, str]:
         except OSError as exc:
             errors.append(str(exc))
 
-    for path_str in target.get("share_dirs", []):
+    for path_str in target["share_dirs"]:
         p = Path(path_str)
         try:
             if p.is_dir():
@@ -118,7 +174,7 @@ def uninstall_app(name: str) -> tuple[bool, str]:
         except OSError as exc:
             errors.append(str(exc))
 
-    for path_str in target.get("lib_dirs", []):
+    for path_str in target["lib_dirs"]:
         p = Path(path_str)
         try:
             if p.is_dir():
@@ -127,7 +183,7 @@ def uninstall_app(name: str) -> tuple[bool, str]:
         except OSError as exc:
             errors.append(str(exc))
 
-    entries = [e for e in entries if e.get("name", "").lower() != name.lower()]
+    entries = [e for e in entries if e["name"].lower() != name.lower()]
     _save_manifest(entries)
 
     if errors:
