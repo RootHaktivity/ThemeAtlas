@@ -1,7 +1,38 @@
 # ThemeAtlas
 
-ThemeAtlas is a cross-distro desktop theming tool with a modern Qt GUI and CLI support.
-It helps users discover, install, apply, and manage themes from multiple sources in one place.
+ThemeAtlas is a cross-distro Linux desktop theming tool with a Qt GUI and CLI.
+It helps you discover, install, apply, and manage themes and related desktop customization packages from multiple sources.
+
+## Project Status
+
+ThemeAtlas is actively maintained and suitable for daily use on Linux desktops.
+The primary tested desktop is GNOME.
+
+## Quick Start
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 main.py gui
+```
+
+## Table of Contents
+
+- [Features](#features)
+- [Compatibility](#compatibility)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [Packaging](#packaging)
+- [Release](#release)
+- [Security](#security)
+- [Contributing](#contributing)
+- [Support](#support)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ## Features
 
@@ -10,27 +41,33 @@ It helps users discover, install, apply, and manage themes from multiple sources
 - Variant selection for themes with multiple downloadable files
 - Preview pipeline with real image fallbacks before generated preview
 - Installed manager with grouped tabs and per-item actions
-- Extension visibility and enabled/disabled detection
+- Extension visibility and enabled or disabled detection
 - Compatibility filtering based on the current environment
 - Rollback-safe apply checkpoints when apply fails
-- CI + automated tests + release workflow
+- CI, automated tests, and release workflow
 
-## Sources and Compatibility
+## Compatibility
 
-The app uses adapters for different theme sources.
-Records are normalized into one install model, then filtered for compatibility with the detected distro/package manager.
+| Component | Status |
+| --- | --- |
+| OS | Linux |
+| Python | 3.10, 3.11, 3.12 |
+| Desktop environment | GNOME (best supported), others may work partially |
+| Package managers | apt, pacman |
+
+Theme and app records are normalized into one install model, then filtered for compatibility with the detected distro and package manager.
 
 ## Requirements
 
 - Python 3.10+
 - Linux desktop environment (best experience on GNOME)
 - Runtime tools as needed:
-  - gsettings
-  - gnome-extensions
-  - pkexec
-  - apt or pacman (for package installs)
+  - `gsettings`
+  - `gnome-extensions`
+  - `pkexec`
+  - `apt` or `pacman` for package installs
 
-Python dependencies are listed in requirements.txt.
+Python dependencies are listed in `requirements.txt`.
 
 ## Installation
 
@@ -49,6 +86,12 @@ python3 main.py gui
 pip install .
 ```
 
+### Option 3: pipx install (recommended CLI path)
+
+```bash
+pipx install .
+```
+
 ## Usage
 
 ### GUI
@@ -57,15 +100,13 @@ pip install .
 python3 main.py gui
 ```
 
-For a dock/app-menu launch (recommended), install the desktop launcher:
+For a dock or app-menu launcher:
 
 ```bash
 bash scripts/install_desktop_entry.sh
 ```
 
-The script creates a user-local launcher at `~/.local/bin/themeatlas-launcher` and
-updates the desktop entry to use it. This avoids `pip --user` issues on distros that
-enforce PEP 668 (externally-managed Python environments).
+This creates a user-local launcher at `~/.local/bin/themeatlas-launcher` and updates the desktop entry to use it.
 
 ### CLI
 
@@ -73,7 +114,30 @@ enforce PEP 668 (externally-managed Python environments).
 themeatlas --help
 ```
 
-If you want the `themeatlas` command system-wide for your user, prefer one of:
+## Troubleshooting
+
+### PySide6 import error mentioning `libEGL.so.1`
+
+Install system OpenGL EGL runtime:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libegl1
+```
+
+### Desktop launch entry not visible
+
+Run:
+
+```bash
+bash scripts/install_desktop_entry.sh
+```
+
+Then log out and back in, or restart your desktop session.
+
+### `themeatlas` command not found
+
+Use one of:
 
 ```bash
 pipx install .
@@ -101,25 +165,11 @@ Compile check:
 python3 -m compileall -q theme_manager
 ```
 
-## Desktop Launcher and Icons
-
-ThemeAtlas includes branded icon assets and a desktop entry template.
-
-- SVG masters: `assets/icons/themeatlas-icon.svg`, `assets/icons/themeatlas-mark.svg`
-- PNG exports: `assets/icons/png/`
-- Desktop entry: `assets/themeatlas.desktop`
-
-Install launcher and icons for your user:
-
-```bash
-bash scripts/install_desktop_entry.sh
-```
-
-After running the script, ThemeAtlas should appear in your app menu.
+Code quality in CI runs on Python 3.10, 3.11, and 3.12.
 
 ## Packaging
 
-ThemeAtlas now includes starter packaging scaffolding for desktop distribution:
+ThemeAtlas includes starter packaging scaffolding for desktop distribution:
 
 - Flatpak manifest: `packaging/flatpak/io.themeatlas.ThemeAtlas.yaml`
 - AppImage staging helper: `scripts/build_appimage.sh`
@@ -140,15 +190,35 @@ The AppImage helper prepares an AppDir and prints the `appimagetool` command to 
 
 ## Release
 
-A GitHub Actions workflow publishes releases on version tags matching `v*`.
-
-Example:
+GitHub Actions publishes releases on version tags matching `v*`.
 
 ```bash
 git tag v1.0.1
 git push origin v1.0.1
 ```
 
+See `CHANGELOG.md` for release history.
+
+## Security
+
+Please review `SECURITY.md` for vulnerability reporting guidance.
+
+## Contributing
+
+Please review `CONTRIBUTING.md` before opening pull requests.
+
+## Support
+
+- Open a GitHub Issue for bugs and feature requests
+- Include distro, desktop environment, Python version, and logs when reporting issues
+
+## Roadmap
+
+- Expand desktop environment support beyond GNOME
+- Improve source quality and trust scoring
+- Add richer preview and compatibility metadata
+- Improve package and distro coverage
+
 ## License
 
-Choose and add your preferred license file before public release.
+Licensed under the MIT License. See `LICENSE`.
