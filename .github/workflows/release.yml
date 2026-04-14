@@ -123,9 +123,18 @@ jobs:
 
       - name: Build Flatpak bundle
         run: |
-          set -e
+          set -euo pipefail
           mkdir -p dist
-          flatpak-builder --user --force-clean --install-deps-from=flathub --repo=build/flatpak-repo build/flatpak-build packaging/flatpak/io.themeatlas.ThemeAtlas.yaml
+          for attempt in 1 2 3; do
+            if flatpak-builder --user --force-clean --install-deps-from=flathub --repo=build/flatpak-repo build/flatpak-build packaging/flatpak/io.themeatlas.ThemeAtlas.yaml; then
+              break
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "flatpak-builder failed after ${attempt} attempts"
+              exit 1
+            fi
+            echo "flatpak-builder failed (attempt ${attempt}/3), retrying..."
+          done
           flatpak build-bundle build/flatpak-repo dist/ThemeAtlas.flatpak io.themeatlas.ThemeAtlas
 
       - name: Upload Flatpak
