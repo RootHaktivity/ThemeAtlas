@@ -64,6 +64,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..environment import detect_environment
+from ..error_formatter import format_error
 from ..extensions import (
     enable_extension_with_reason,
     get_current_gnome_shell_major,
@@ -2254,26 +2255,8 @@ class AvailableTab(QWidget):
         log.error("Install failed for '%s': %s", record.name, message)
         self.app.set_status(f"Install failed for {record.name}: {message}")
         
-        error_guidance = message
-        if "dart-sass" in message.lower() or ("sass" in message.lower() and "requires" in message.lower()):
-            error_guidance = (
-                f"{message}\n\n"
-                "FIX: Install dart-sass using your package manager:\n"
-                "  sudo apt install dart-sass  # Ubuntu/Debian\n"
-                "  sudo dnf install dart-sass  # Fedora\n"
-                "  sudo pacman -S dart-sass    # Arch\n\n"
-                "Then try installing again."
-            )
-        elif "build failed" in message.lower():
-            error_guidance = (
-                f"{message}\n\n"
-                "This project requires build tools that may be missing.\n"
-                "Common solutions:\n"
-                "1. Install build essentials: sudo apt install build-essential\n"
-                "2. Install meson: sudo apt install meson\n"
-                "3. Try a pre-built version from your package manager\n\n"
-                "For specific help, search the project's GitHub issues."
-            )
+        # Use intelligent error formatter to provide user-friendly guidance
+        error_guidance = format_error(message, context="install")
         
         QMessageBox.critical(self, "Installation Failed", f"Could not install {record.name}\n\n{error_guidance}")
 

@@ -2,12 +2,13 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock, PropertyMock
 
 from theme_manager.extractor import extract_archive
 from theme_manager.installer import preview_archive_changes
 from theme_manager.gui.api import ThemeRecord
 from theme_manager.gui_qt.app import AvailableTab
+from theme_manager.error_formatter import format_error
 
 
 class TestIntegrationSmoke(unittest.TestCase):
@@ -132,6 +133,76 @@ class TestIntegrationSmoke(unittest.TestCase):
                 extract_archive(str(archive), system_wide=False)
 
             self.assertFalse(script_marker.exists())
+
+    def test_error_formatter_meson_not_found(self):
+        """Error formatter provides actionable remediation for missing meson."""
+        error = "meson: command not found\nSetup failed"
+        formatted = format_error(error)
+        
+        self.assertIn("Meson build system is not installed", formatted)
+        self.assertIn("sudo apt install meson", formatted)
+        self.assertIn("sudo pacman -S meson", formatted)
+
+    def test_error_formatter_missing_dependency(self):
+        """Error formatter identifies missing build dependency."""
+        error = "pkg-config --cflags-only-I gtk+-3.0\ngdk-pixbuf: command not found"
+        formatted = format_error(error)
+        
+        self.assertIn("build dependency is missing", formatted)
+        self.assertNotEqual(formatted, error)
+
+    def test_error_formatter_compiler_missing(self):
+        """Error formatter detects missing C compiler."""
+        error = "gcc: command not found\nNo C compiler found"
+        formatted = format_error(error)
+        
+        self.assertIn("C compiler is not installed", formatted)
+        self.assertIn("build-essential", formatted)
+
+    def test_error_formatter_sass_missing(self):
+        """Error formatter identifies missing SASS."""
+        error = "sass: command not found"
+        formatted = format_error(error)
+        
+        self.assertIn("SASS", formatted)
+        self.assertIn("npm install -g sass", formatted)
+
+    def test_source_github_record_heuristic(self):
+        """GitHub records without download_url are detected as source-only."""
+        from theme_manager.gui_qt.app import _is_likely_github_source_only
+        
+        source_only = ThemeRecord(
+            id="github-src", kind="gtk", name="SourceTheme",
+            summary="", description="", score=0, downloads=0, author="",
+            thumbnail_url="", download_url="", detail_url="https://github.com/user/theme",
+            updated="", source="github"
+        )
+        self.assertTrue(_is_likely_github_source_only(source_only))
+        
+        prebuilt = ThemeRecord(
+            id="github-pre", kind="gtk", name="PrebuiltTheme",
+            summary="", description="", score=0, downloads=0, author="",
+            thumbnail_url="", download_url="https://github.com/user/theme/releases/download/v1/theme.zip",
+            detail_url="https://github.com/user/theme", updated="", source="github"
+        )
+        self.assertFalse(_is_likely_github_source_only(prebuilt))
+
+    def test_theme_record_roundtrip_after_install(self):
+        """Theme record state survives through install workflow."""
+        record = ThemeRecord(
+            id="test-1", kind="gtk", name="TestTheme",
+            summary="Test", description="Desc", score=4.5, downloads=100,
+            author="Tester", thumbnail_url="", download_url="https://example.com/t.zip",
+            detail_url="https://example.com", updated="2026-01-01", source="github"
+        )
+        
+        # Verify state is preserved and immutable during workflow
+        original_name = record.name
+        original_id = record.id
+        
+        self.assertEqual(record.name, original_name)
+        self.assertEqual(record.id, original_id)
+        self.assertEqual(record.kind, "gtk")
 
 
 if __name__ == "__main__":

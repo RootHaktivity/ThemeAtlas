@@ -101,6 +101,38 @@ def _read_limited(resp, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
+def _get_smart_cache_ttl(url: str) -> int:
+    """
+    Determine intelligent cache TTL based on URL patterns.
+    
+    - API responses and metadata: 24 hours
+    - Theme previews/thumbnails: 7 days (stable content)
+    - Static release metadata: 24 hours
+    - Search results: 12 hours (may change)
+    - Theme archives: no cache (always fetch fresh)
+    """
+    url_lower = (url or "").lower()
+    
+    # Never cache archive downloads
+    if any(ext in url_lower for ext in [".zip", ".tar.gz", ".tar.xz", ".tar.bz2", ".tgz"]):
+        return 0
+    
+    # Cache previews/thumbnails for a week
+    if any(term in url_lower for term in ["preview", "thumbnail", "screenshot", "image", "/img/", ".png", ".jpg", ".jpeg"]):
+        return 7 * 24 * 3600
+    
+    # Cache API/metadata responses for 24 hours
+    if any(term in url_lower for term in ["api", "metadata", "manifest", "json"]):
+        return 24 * 3600
+    
+    # Cache search results for 12 hours (more volatile)
+    if any(term in url_lower for term in ["search", "query"]):
+        return 12 * 3600
+    
+    # Default: 24 hours for other content
+    return 24 * 3600
+
+
 def fetch_bytes(
     url: str,
     *,
