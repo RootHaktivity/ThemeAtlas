@@ -62,20 +62,23 @@ jobs:
 
       - name: Build AppImage
         run: |
-          set -e
+          set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
+          APPIMAGE="dist/ThemeAtlas-${VERSION}-x86_64.AppImage"
           mkdir -p build/tools
           mkdir -p dist
           curl -L -o build/tools/appimagetool-x86_64.AppImage https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x build/tools/appimagetool-x86_64.AppImage
           ARCH=x86_64 ./build/tools/appimagetool-x86_64.AppImage --appimage-extract-and-run \
             build/appimage/ThemeAtlas.AppDir \
-            "dist/ThemeAtlas-${VERSION}-x86_64.AppImage"
+            "${APPIMAGE}"
 
       - name: Generate AppImage checksum
         run: |
-          set -e
-          sha256sum dist/ThemeAtlas-*-x86_64.AppImage > dist/ThemeAtlas-*-x86_64.AppImage.sha256
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          APPIMAGE="dist/ThemeAtlas-${VERSION}-x86_64.AppImage"
+          sha256sum "${APPIMAGE}" > "${APPIMAGE}.sha256"
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
@@ -93,8 +96,29 @@ jobs:
 
       - name: Install Flatpak toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "apt-get update failed after ${attempt} attempts"
+              exit 1
+            fi
+            echo "apt-get update failed, retrying (${attempt}/3)..."
+          done
+
+          for attempt in 1 2 3; do
+            if sudo apt-get install -y --no-install-recommends flatpak flatpak-builder; then
+              break
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "apt-get install flatpak toolchain failed after ${attempt} attempts"
+              exit 1
+            fi
+            echo "flatpak toolchain install failed, retrying (${attempt}/3)..."
+          done
+
           flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
       - name: Build Flatpak bundle
