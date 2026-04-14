@@ -119,13 +119,13 @@ jobs:
             echo "flatpak toolchain install failed, retrying (${attempt}/3)..."
           done
 
-          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
       - name: Build Flatpak bundle
         run: |
           set -e
           mkdir -p dist
-          flatpak-builder --force-clean --install-deps-from=flathub --repo=build/flatpak-repo build/flatpak-build packaging/flatpak/io.themeatlas.ThemeAtlas.yaml
+          flatpak-builder --user --force-clean --install-deps-from=flathub --repo=build/flatpak-repo build/flatpak-build packaging/flatpak/io.themeatlas.ThemeAtlas.yaml
           flatpak build-bundle build/flatpak-repo dist/ThemeAtlas.flatpak io.themeatlas.ThemeAtlas
 
       - name: Upload Flatpak
