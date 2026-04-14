@@ -3,6 +3,8 @@
 ThemeAtlas is a cross-distro Linux desktop theming tool with a Qt GUI and CLI.
 It helps you discover, install, apply, and manage themes and related desktop customization packages from multiple sources.
 
+![ThemeAtlas GUI](assets/screenshots/themeatlas-gui.png)
+
 ## Project Status
 
 ThemeAtlas is actively maintained and suitable for daily use on Linux desktops.
@@ -149,6 +151,23 @@ or
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+```
+
+### AppImage does nothing when launched
+
+On systems without the FUSE 2 compatibility library, desktop launchers often suppress the AppImage error and it appears to do nothing.
+
+On Ubuntu 24.04, install:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libfuse2t64
+```
+
+For a one-off test without installing FUSE, run:
+
+```bash
+./ThemeAtlas-1.0.0-x86_64.AppImage --appimage-extract-and-run
 ```
 
 ## Development
