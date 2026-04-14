@@ -109,7 +109,7 @@ jobs:
           done
 
           for attempt in 1 2 3; do
-            if sudo apt-get install -y --no-install-recommends flatpak flatpak-builder; then
+            if sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils; then
               break
             fi
             if [ "${attempt}" -eq 3 ]; then
