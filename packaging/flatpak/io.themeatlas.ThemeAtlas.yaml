@@ -14,11 +14,47 @@ modules:
   - name: python3-pillow
     buildsystem: simple
     build-commands:
-      - pip3 install --no-build-isolation --prefix=/app Pillow>=9.0
+      - pip3 install --no-build-isolation --no-deps --prefix=/app ./pillow-12.2.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/43/e3/fdc657359e919462369869f1c9f0e973f353f9a9ee295a39b1fea8ee1a77/pillow-12.2.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+        sha256: 62f5409336adb0663b7caa0da5c7d9e7bdbaae9ce761d34669420c2a801b2780
+  - name: python3-shiboken6
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-build-isolation --no-deps --prefix=/app ./shiboken6-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/65/cb/4bb0c76011166230daa7c0074aeb3fdb3935c83ac1fef3789b85fcd1a8fc/shiboken6-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl
+        sha256: ad54e64f8192ddbdff0c54ac82b89edcd62ed623f502ea21c960541d19514053
+  - name: python3-pyside6-essentials
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-build-isolation --no-deps --prefix=/app ./pyside6_essentials-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/f3/a9/07c9e5c014b871c1b19caf8f994bcd50b345559b81f81671217b49559b67/pyside6_essentials-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl
+        sha256: dc20e7afd5fc6fe51297db91cef997ce60844be578f7a49fc61b7ab9657a8849
+  - name: python3-pyside6-addons
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-build-isolation --no-deps --prefix=/app ./pyside6_addons-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/31/b9/e81172835ccc9d8b9792cc6bf7524a252a0db9a76ddd693de230402697f9/pyside6_addons-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl
+        sha256: ac6fe3d4ef4497dde3efc5e896b0acd53ff6c93be4bf485f045690f919419f35
+  - name: python3-pyside6
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-build-isolation --no-deps --prefix=/app ./pyside6-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/da/89/9a1f521051714e6694ebbe2b979ded279845ec8e25cb309ca3960158d74f/pyside6-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl
+        sha256: c642e2d25704ca746fd37f56feacf25c5aecc4cd40bef23d18eec81f87d9dc00
   - name: themeatlas
     buildsystem: simple
     build-commands:
-      - pip3 install --no-build-isolation --prefix=/app .
+      - pip3 install --no-build-isolation --no-deps --prefix=/app .
       - install -Dm644 assets/themeatlas.desktop /app/share/applications/themeatlas.desktop
       - install -Dm644 assets/icons/themeatlas-icon.svg /app/share/icons/hicolor/scalable/apps/themeatlas.svg
       - install -Dm644 assets/icons/png/themeatlas-icon-256.png /app/share/icons/hicolor/256x256/apps/themeatlas.png
